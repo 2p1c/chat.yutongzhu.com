@@ -1,0 +1,813 @@
+* {
+  box-sizing: border-box;
+}
+
+/* ── Theme variables ── */
+:root {
+  color-scheme: light;
+  --background-color: #f8f5f0;
+  --text-color: #1a1a1a;
+  --dimmed-text-color: #777;
+  --link-color: #0066cc;
+  --border-color: #ddd;
+  --code-bg: #f5f5f5;
+  --btn-bg: #1a1a1a;
+  --btn-text: #fff;
+  --btn-bg-hover: #333;
+  /* Glass backdrop behind content, over the animated background */
+  --content-glass: rgba(255, 255, 255, 0.78);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background-color: #0e0e11;
+  --text-color: #ddd;
+  --dimmed-text-color: #aaa;
+  --link-color: #65a0ff;
+  --border-color: #454545;
+  --code-bg: #1a1a1e;
+  --btn-bg: #ddd;
+  --btn-text: #111;
+  --btn-bg-hover: #fff;
+  --content-glass: rgba(14, 14, 17, 0.78);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  scrollbar-gutter: stable;
+  overscroll-behavior: none; /* no rubber-band / overscroll past the top or bottom */
+  height: 100%;
+  overflow: hidden; /* fixed viewport layout — only the message list scrolls */
+}
+
+body {
+  font: normal 1.21em KaTeX_Main, Times New Roman, serif;
+  background-color: var(--background-color);
+  color: var(--text-color);
+  line-height: 1.6;
+
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 27px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Animated background layer ── */
+#vanta-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none; /* animation must never block clicks */
+}
+
+#vanta-bg canvas {
+    opacity: 0.99;
+}
+/* ── Content layer above the animation, with soft-edged glass backdrop ── */
+.page {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0; /* allow the message list to shrink and scroll internally */
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Glass card temporarily disabled for preview (restore by uncommenting) ──
+.page::before {
+  content: "";
+  position: absolute;
+  inset: -80px -110px;
+  z-index: -1;
+  background: var(--content-glass);
+  border-radius: 0px;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 8%, black 92%, transparent),
+                      linear-gradient(to right, transparent, black 10%, black 89%, transparent);
+  -webkit-mask-composite: source-in;
+  -webkit-mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-image: linear-gradient(to bottom, transparent, black 8%, black 92%, transparent),
+              linear-gradient(to right, transparent, black 10%, black 89%, transparent);
+  mask-composite: intersect;
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
+}
+*/
+
+header {
+  position: relative;
+  margin-bottom: 0px;
+}
+
+.header-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 2px;
+}
+
+.theme-toggle,
+.lang-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-color);
+  border-radius: 6px;
+}
+
+.theme-toggle:hover,
+.lang-toggle:hover {
+  opacity: 0.65;
+}
+
+.theme-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
+.translate-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.theme-icon-moon {
+  display: none;
+}
+
+[data-theme="dark"] .theme-icon-sun {
+  display: none;
+}
+
+[data-theme="dark"] .theme-icon-moon {
+  display: block;
+}
+
+h1, h2 {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  line-height: 2rem;
+  font-size: 1.5rem;
+}
+
+header h1 {
+  font-size: 1.8rem;
+  font-weight: 800;
+  margin: 0 0 0px 0;
+}
+
+.subtitle {
+  color: var(--text-color);
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.home-photo {
+  width: 600px;
+  height: 150px;
+  margin-top: 18px;
+  margin-bottom:0px;
+  display: block;
+}
+
+h2 {
+  font-size: 20.25px;
+  font-weight: 800;
+  padding-bottom: 0px;
+  margin-top: 25px;
+  margin-bottom: 20px;
+}
+
+.post-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.post-item {
+  margin-bottom: 18px;
+}
+
+.post-date {
+  font-size: 15px;
+  line-height: 1.25rem;
+  color: var(--dimmed-text-color);
+  width: 83px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-style: italic;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+.post-date-blog {
+  font-size: 13.5px;
+  line-height: 1.25rem;
+  color: var(--dimmed-text-color);
+  width: 83px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-style: italic;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  margin-bottom:20px;
+}
+
+.post-title-link {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  color: var(--link-color);
+  text-decoration: none;
+  font-size: 18px;
+  font-weight: normal;
+  line-height: 1.5;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+.bio p {
+  margin-bottom: 16px;
+  color: var(--text-color);
+}
+
+.bio-title-text {
+  position: relative;
+  display: inline-block;
+  padding-right: 15px;
+}
+
+.bio-title-link {
+  position: absolute;
+  top: 2px;
+  right: -2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-color);
+  text-decoration: none;
+  opacity: 0.55;
+  border-radius: 4px;
+  transition: opacity 0.15s ease;
+}
+
+.bio-title-link:hover {
+  opacity: 1;
+}
+
+.bio-title-link svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  transform: rotate(11deg);
+}
+
+.post {
+  margin-top: 0;
+}
+
+.post-title {
+  font-size: 33.75px;
+  font-weight: 800;
+  margin: 0 0 13px 0;
+  margin-top: 18px;
+}
+
+.post-content {
+  margin-top: 24px;
+}
+
+.post-content h1,
+.post-content h2,
+.post-content h3 {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  margin-top: 32px;
+  margin-bottom: 12px;
+}
+
+.post-content h2 {
+  font-size: 1.2rem;
+}
+
+.post-content p {
+  margin-bottom: 16px;
+}
+
+.post-content img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 24px 0;
+}
+
+.post-content [align="center"] img {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.post-figure {
+  margin: 24px 0;
+}
+
+.post-figure img {
+  margin: 0;
+}
+
+.post-figcaption {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--dimmed-text-color);
+  text-align: center;
+}
+
+.post-content a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.post-content a:hover {
+  text-decoration: underline;
+}
+
+.post-content pre {
+  background: var(--code-bg);
+  padding: 16px;
+  overflow-x: auto;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 16px 0;
+}
+
+.post-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875em;
+}
+
+.post-content pre code {
+  font-size: 0.875rem;
+}
+
+.post-content blockquote {
+  border-left: 3px solid var(--border-color);
+  margin: 16px 0;
+  padding-left: 16px;
+  color: var(--dimmed-text-color);
+}
+
+.post-content ul,
+.post-content ol {
+  margin: 16px 0;
+  padding-left: 24px;
+}
+
+.post-content li {
+  margin-bottom: 8px;
+}
+
+.back-link {
+  margin-top: 40px;
+}
+
+/* ── Admin ── */
+.admin {
+  margin-top: 0;
+}
+
+.admin-post-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.admin-post-item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.admin-post-date {
+  font-size: 0.875rem;
+  color: var(--dimmed-text-color);
+  flex-shrink: 0;
+}
+
+.admin-post-title {
+  color: var(--link-color);
+  text-decoration: none;
+  flex: 1;
+}
+
+.admin-post-title:hover {
+  text-decoration: underline;
+}
+
+.admin-post-edit {
+  color: var(--dimmed-text-color);
+  text-decoration: none;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.admin-post-edit:hover {
+  color: var(--link-color);
+}
+
+.admin-empty {
+  color: var(--dimmed-text-color);
+  font-style: italic;
+  margin-bottom: 12px;
+}
+
+.admin-error {
+  color: #cc0000;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+.admin-input {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 0.95rem;
+  background: var(--background-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  margin-bottom: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.admin-textarea {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  font-size: 0.9rem;
+  background: var(--background-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.6;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.admin-btn {
+  padding: 8px 24px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: none;
+  font-family: inherit;
+}
+
+.admin-btn:hover {
+  background: var(--btn-bg-hover);
+}
+
+.admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.admin-link {
+  color: var(--dimmed-text-color);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.admin-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Admin Media ── */
+.admin-media-section {
+  margin-top: 36px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-color);
+}
+
+.admin-media-upload {
+  margin-bottom: 20px;
+}
+
+.admin-media-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-file-input {
+  font-size: 0.9rem;
+  font-family: inherit;
+  flex: 1;
+}
+
+.admin-btn-small {
+  padding: 6px 16px;
+  font-size: 0.85rem;
+}
+
+.admin-media-hint {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--dimmed-text-color);
+}
+
+.admin-media-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.admin-media-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.admin-media-item:last-child {
+  border-bottom: none;
+}
+
+.admin-media-preview {
+  width: 80px;
+  height: 60px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--code-bg);
+  border-radius: 2px;
+}
+
+.admin-media-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.admin-media-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--dimmed-text-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.admin-media-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-media-name {
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.admin-media-size {
+  font-size: 0.75rem;
+  color: var(--dimmed-text-color);
+}
+
+.admin-media-delete-btn {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  background: var(--background-color);
+  color: #cc0000;
+  border: 1px solid #cc0000;
+  font-family: inherit;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.admin-media-delete-btn:hover {
+  background: #cc0000;
+  color: #fff;
+}
+
+.admin-media-empty {
+  color: var(--dimmed-text-color);
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+.admin-media-error {
+  color: #cc0000;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+.get-in-touch {
+  margin: 0;
+  color: var(--dimmed-text-color);
+}
+
+.get-in-touch-link {
+  color: var(--link-color);
+  text-decoration: none;
+  font-size: 18px;
+  font-weight: normal;
+  line-height: 0.5rem;
+  margin: 0;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+/* ── Chat with me section ── */
+.chat-desc a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.chat-desc a:hover {
+  text-decoration: underline;
+}
+
+/* ── Agent page ── */
+.site-footer {
+  margin-top: auto; /* push to the bottom of the viewport-height page */
+  padding-top: 6px;
+  font-size: 0.8rem;
+  color: var(--dimmed-text-color);
+  text-align: right;
+}
+
+.site-footer a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.site-footer a:hover {
+  text-decoration: underline;
+}
+
+.site-footer p {
+  margin: -4px;
+}
+
+/* ── Language toggle ── */
+[data-lang="en"] .lang-zh {
+  display: none;
+}
+
+[data-lang="zh"] .lang-en {
+  display: none;
+}
+
+/* ── Chat interface ── */
+.chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 24px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 2px;
+  scrollbar-gutter: stable;
+}
+
+/* Theme-aware scrollbar for the message list (Chrome/Safari/Edge) */
+.chat-messages::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: var(--dimmed-text-color);
+}
+
+/* Firefox */
+.chat-messages {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+
+.chat-message {
+  margin-bottom: 16px;
+}
+
+.chat-message .chat-role {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--dimmed-text-color);
+  margin-bottom: 2px;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.chat-message .chat-body {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* ── Gemini-style chat input ── */
+.chat-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  margin-bottom: 40px;
+  padding: 10px 10px 10px 18px;
+  background: var(--code-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 28px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* When the chat input is focused: no blue ring — instead the glass fades to a
+   transparent halo around the input, revealing the animation behind it.
+   (Temporarily disabled along with the glass card above.) */
+.page.chat-focus::before {
+  background: radial-gradient(circle at 50% 80%, transparent 0%, transparent 6%, var(--content-glass) 28%);
+}
+
+.chat-textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--text-color);
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.5;
+  max-height: 200px;
+  padding: 6px 0;
+}
+
+.chat-textarea::placeholder {
+  color: var(--dimmed-text-color);
+}
+
+.chat-send {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: var(--border-color);
+  color: var(--dimmed-text-color);
+  transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.chat-send:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.chat-send:not(:disabled) {
+  background: #000;
+  color: #fff;
+}
+
+/* Dark theme: white button so it stands out against the dark glass. */
+[data-theme="dark"] .chat-send:not(:disabled) {
+  background: #fff;
+  color: #000;
+}
+
+.chat-send-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
