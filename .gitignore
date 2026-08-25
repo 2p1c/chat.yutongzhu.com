@@ -2,3 +2,8 @@ instruction/
 instruction.md
 .DS_Store
 
+# Python backend
+backend/.venv/
+__pycache__/
+*.pyc
+backend/.env

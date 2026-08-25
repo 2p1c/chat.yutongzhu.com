@@ -12,28 +12,37 @@
   var vanta = null;
 
   function currentTheme() {
-    return document.documentElement.getAttribute('data-theme') || 'dark';
+    // Only light/dark are valid theme keys; anything else (e.g. a stale
+    // 'auto'/'system' value in localStorage) falls back to dark.
+    var t = document.documentElement.getAttribute('data-theme');
+    return THEMES[t] ? t : 'dark';
   }
 
   // Builds the cells effect for the active theme. Destroying + rebuilding on theme
   // switch is simple and reliable (switches are rare, so the cost is negligible).
   function initVanta() {
-    var el = document.getElementById('vanta-bg');
-    if (!el || !window.VANTA || !window.VANTA.CELLS) return;
-    if (vanta) { vanta.destroy(); vanta = null; }
-    vanta = window.VANTA.CELLS({
-      el: el,
-      mouseControls: true,
-      touchControls: true,
-      gyroControls: false,
-      minHeight: 200,
-      minWidth: 200,
-      scale: 1.0,
-      scaleMobile: 0.8,
-      color1: THEMES[currentTheme()].color1,
-      color2: THEMES[currentTheme()].color2,
-      backgroundColor: THEMES[currentTheme()].backgroundColor
-    });
+    // Vanta is purely decorative. If WebGL/three.js fails (hardware acceleration
+    // disabled, bad driver, etc.) it must never break the chat — so isolate it.
+    try {
+      var el = document.getElementById('vanta-bg');
+      if (!el || !window.VANTA || !window.VANTA.CELLS) return;
+      if (vanta) { vanta.destroy(); vanta = null; }
+      vanta = window.VANTA.CELLS({
+        el: el,
+        mouseControls: true,
+        touchControls: true,
+        gyroControls: false,
+        minHeight: 200,
+        minWidth: 200,
+        scale: 1.0,
+        scaleMobile: 0.8,
+        color1: THEMES[currentTheme()].color1,
+        color2: THEMES[currentTheme()].color2,
+        backgroundColor: THEMES[currentTheme()].backgroundColor
+      });
+    } catch (err) {
+      console.warn('[vanta] init failed (decorative only):', err);
+    }
   }
 
   // Respect the system "reduce motion" preference: no animation, plain background.
@@ -78,7 +87,10 @@
     });
   })();
 
-  /* ── Chat input (UI only for now — backend not wired yet) ── */
+  /* ── Chat — wired to the Storage Service API ──
+     Frontend → HTTP API (/api/sessions/{id}/...) → StorageService → Redis / PostgreSQL / pgvector.
+     No Agent / LLM in this phase; the backend returns a clearly-marked MOCK reply.
+  */
   (function () {
     var textarea = document.getElementById('chat-textarea');
     var sendBtn = document.getElementById('chat-send');
@@ -94,39 +106,96 @@
       inputBox.addEventListener('focusout', function () { page.classList.remove('chat-focus'); });
     }
 
+    // Same origin: the backend serves both /api and the static frontend.
+    var API_BASE = '';
+
+    // Session id persisted in localStorage so a page refresh restores the same session.
+    var SESSION_KEY = 'session_id';
+    var sessionId = (function () {
+      try {
+        var existing = localStorage.getItem(SESSION_KEY);
+        if (existing) return existing;
+        var fresh = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+        localStorage.setItem(SESSION_KEY, fresh);
+        return fresh;
+      } catch (e) {
+        return String(Date.now());
+      }
+    })();
+
+    var sending = false;
+
     function autogrow() {
       textarea.style.height = 'auto';
       textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
     }
 
     function updateSend() {
-      sendBtn.disabled = textarea.value.trim().length === 0;
+      sendBtn.disabled = sending || textarea.value.trim().length === 0;
     }
 
-    function addMessage(role, content) {
+    // msg: { role: 'user'|'assistant', content: string, mock?: boolean }
+    function addMessage(msg) {
       if (!messages) return;
       var div = document.createElement('div');
-      div.className = 'chat-message';
+      div.className = 'chat-message' + (msg.mock ? ' chat-message-mock' : '');
       var roleEl = document.createElement('span');
       roleEl.className = 'chat-role';
-      roleEl.textContent = role === 'user' ? 'You' : 'Agent';
+      roleEl.textContent = msg.role === 'user' ? 'You' : (msg.mock ? 'Agent (Mock)' : 'Agent');
       var bodyEl = document.createElement('div');
       bodyEl.className = 'chat-body';
-      bodyEl.textContent = content;
+      bodyEl.textContent = msg.content || '';
       div.appendChild(roleEl);
       div.appendChild(bodyEl);
       messages.appendChild(div);
       messages.scrollTop = messages.scrollHeight;
     }
 
+    function render(list) {
+      if (!messages) return;
+      messages.textContent = '';
+      (list || []).forEach(addMessage);
+    }
+
+    // Restore history for this session on page load (refresh → same session).
+    fetch(API_BASE + '/api/sessions/' + sessionId)
+      .then(function (r) { return r.json(); })
+      .then(function (data) { render(data.messages); })
+      .catch(function (err) {
+        console.error('[chat] failed to restore session:', err);
+        addMessage({ role: 'assistant', mock: true, content: '[Storage service unreachable — is the backend running?]' });
+      });
+
     function send() {
       var text = textarea.value.trim();
-      if (!text) return;
-      addMessage('user', text);
-      textarea.value = '';
-      textarea.style.height = 'auto';
+      if (!text || sending) return;
+      sending = true;
       updateSend();
-      textarea.focus();
+      addMessage({ role: 'user', content: text });
+
+      fetch(API_BASE + '/api/sessions/' + sessionId + '/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, user_id: 'user_demo' })
+      })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          render(data.messages); // server returns the session incl. the mock assistant reply
+        })
+        .catch(function (err) {
+          console.error('[chat] send failed:', err);
+          addMessage({ role: 'assistant', mock: true, content: '[Send failed — storage service unreachable]' });
+        })
+        .then(function () {
+          sending = false;
+          textarea.value = '';
+          textarea.style.height = 'auto';
+          updateSend();
+          textarea.focus();
+        });
     }
 
     textarea.addEventListener('input', function () {

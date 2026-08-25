@@ -735,6 +735,15 @@ h2 {
   word-wrap: break-word;
 }
 
+/* Mock assistant replies (storage demo phase — no real Agent / LLM yet) */
+.chat-message-mock .chat-role {
+  font-style: italic;
+}
+
+.chat-message-mock .chat-body {
+  opacity: 0.75;
+}
+
 /* ── Gemini-style chat input ── */
 .chat-input {
   display: flex;
