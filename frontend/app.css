@@ -67,7 +67,14 @@ body {
 }
 
 #vanta-bg canvas {
-    opacity: 0.99;
+  opacity: 0.99;
+  /* Fade the cells canvas in so it doesn't "pop" after the late JS load. */
+  animation: vanta-fade-in 0.6s ease-out;
+}
+
+@keyframes vanta-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 0.99; }
 }
 /* ── Content layer above the animation, with soft-edged glass backdrop ── */
 .page {
@@ -649,8 +656,12 @@ h2 {
   margin-top: auto; /* push to the bottom of the viewport-height page */
   padding-top: 6px;
   font-size: 0.8rem;
-  color: var(--dimmed-text-color);
+  color: #000; /* light theme: black footer text */
   text-align: right;
+}
+
+[data-theme="dark"] .site-footer {
+  color: var(--dimmed-text-color); /* dark theme: keep dimmed */
 }
 
 .site-footer a {
@@ -718,6 +729,13 @@ h2 {
 
 .chat-message {
   margin-bottom: 16px;
+  /* Fade messages in so the text doesn't abruptly "pop" on load / send. */
+  animation: message-fade-in 0.25s ease-out;
+}
+
+@keyframes message-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .chat-message .chat-role {

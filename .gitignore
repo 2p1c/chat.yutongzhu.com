@@ -7,3 +7,4 @@ backend/.venv/
 __pycache__/
 *.pyc
 backend/.env
+交付说明.md

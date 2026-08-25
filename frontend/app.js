@@ -183,7 +183,15 @@
           return r.json();
         })
         .then(function (data) {
-          render(data.messages); // server returns the session incl. the mock assistant reply
+          // Append only the assistant reply the server just added. Re-rendering
+          // the whole list here would flash and re-trigger the fade-in on every send.
+          var list = data.messages;
+          if (list && list.length) {
+            var last = list[list.length - 1];
+            if (last && last.role === 'assistant') {
+              addMessage(last);
+            }
+          }
         })
         .catch(function (err) {
           console.error('[chat] send failed:', err);
