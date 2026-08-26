@@ -166,12 +166,74 @@
         addMessage({ role: 'assistant', mock: true, content: '[Storage service unreachable — is the backend running?]' });
       });
 
+    // Parse an SSE stream from a ReadableStream reader.
+    // onMessage(json), onError(json) receive parsed JSON from `data:` lines.
+    // The terminator `[DONE]` resolves; `event: error` rejects.
+    function readSSE(reader, onMessage, onError) {
+      var decoder = new TextDecoder('utf-8');
+      var buffer = '';
+      function pump() {
+        return reader.read().then(function (res) {
+          if (res.done) return;
+          buffer += decoder.decode(res.value, { stream: true });
+          // SSE events are separated by a blank line.
+          var parts = buffer.split('\n\n');
+          buffer = parts.pop(); // keep the trailing partial
+          for (var i = 0; i < parts.length; i++) {
+            var block = parts[i];
+            var eventName = 'message';
+            var dataLines = [];
+            var lines = block.split('\n');
+            for (var j = 0; j < lines.length; j++) {
+              var line = lines[j];
+              if (line.indexOf('event:') === 0) eventName = line.slice(6).trim();
+              else if (line.indexOf('data:') === 0) dataLines.push(line.slice(5).trim());
+            }
+            var data = dataLines.join('\n');
+            if (!data) continue;
+            if (data === '[DONE]') return;  // resolve
+            var json = null;
+            try { json = JSON.parse(data); } catch (e) { continue; }
+            if (eventName === 'error') throw { sseError: true, payload: json };
+            onMessage(json);
+          }
+          return pump();
+        });
+      }
+      return pump();
+    }
+
     function send() {
       var text = textarea.value.trim();
       if (!text || sending) return;
       sending = true;
       updateSend();
       addMessage({ role: 'user', content: text });
+      // Clear the input immediately on send so the user can keep typing while
+      // the agent streams its reply. The message text itself is already in the
+      // chat history above.
+      textarea.value = '';
+      textarea.style.height = 'auto';
+
+      // Pre-create the assistant bubble so we can append text tokens into it.
+      var bubble = document.createElement('div');
+      bubble.className = 'chat-message';
+      var roleEl = document.createElement('span');
+      roleEl.className = 'chat-role';
+      roleEl.textContent = 'Agent';
+      var bodyEl = document.createElement('div');
+      bodyEl.className = 'chat-body';
+      bubble.appendChild(roleEl);
+      bubble.appendChild(bodyEl);
+      messages.appendChild(bubble);
+      messages.scrollTop = messages.scrollHeight;
+      var assistantText = '';
+
+      function failAndCleanup(reason) {
+        bubble.remove();
+        console.error('[chat] send failed:', reason);
+        addMessage({ role: 'assistant', mock: true, content: '[Send failed — ' + reason + ']' });
+      }
 
       fetch(API_BASE + '/api/sessions/' + sessionId + '/messages', {
         method: 'POST',
@@ -179,28 +241,35 @@
         body: JSON.stringify({ message: text, user_id: 'user_demo' })
       })
         .then(function (r) {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
-        })
-        .then(function (data) {
-          // Append only the assistant reply the server just added. Re-rendering
-          // the whole list here would flash and re-trigger the fade-in on every send.
-          var list = data.messages;
-          if (list && list.length) {
-            var last = list[list.length - 1];
-            if (last && last.role === 'assistant') {
-              addMessage(last);
+          if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+          return readSSE(
+            r.body.getReader(),
+            function onMessage(evt) {
+              if (evt && typeof evt.delta === 'string') {
+                assistantText += evt.delta;
+                bodyEl.textContent = assistantText;
+                messages.scrollTop = messages.scrollHeight;
+              } else if (evt && evt.done && evt.message) {
+                // Server confirmed the final assistant message — replace the
+                // streamed text with the authoritative copy from the server.
+                assistantText = evt.message.content || '';
+                bodyEl.textContent = assistantText;
+              }
+            },
+            function onError(err) {
+              failAndCleanup((err && err.payload && (err.payload.detail || err.payload.error)) || 'agent error');
             }
-          }
+          );
         })
         .catch(function (err) {
-          console.error('[chat] send failed:', err);
-          addMessage({ role: 'assistant', mock: true, content: '[Send failed — storage service unreachable]' });
+          if (err && err.sseError) {
+            failAndCleanup((err.payload && (err.payload.detail || err.payload.error)) || 'agent error');
+          } else {
+            failAndCleanup(err && err.message ? err.message : 'storage service unreachable');
+          }
         })
         .then(function () {
           sending = false;
-          textarea.value = '';
-          textarea.style.height = 'auto';
           updateSend();
           textarea.focus();
           // Notify the sidebar IIFE so its `message_count` can refresh.

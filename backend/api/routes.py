@@ -1,16 +1,17 @@
 """HTTP API for the chat storage service.
 
-    Frontend → HTTP API → StorageService → Redis / PostgreSQL / pgvector
+    Frontend → HTTP API → StorageService → Agent / Redis / PostgreSQL / pgvector
 
 This layer only ever talks to StorageService — never to Redis/PostgreSQL directly.
 
-TODO(Future Agent API):
-    POST /api/agent/chat  — the Agent Runtime entry point will live here and
-    reuse StorageService for persistence. Not implemented in this phase.
+POST /api/sessions/{session_id}/messages streams an SSE response: the Agent
+runtime may take seconds; the browser renders tokens as they arrive.
 """
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from storage.config import DEFAULT_USER_ID
@@ -74,10 +75,34 @@ def get_session(session_id: str, request: Request):
 
 @router.post("/sessions/{session_id}/messages")
 def post_message(session_id: str, body: MessageIn, request: Request):
-    """POST /api/sessions/{session_id}/messages — send one message.
+    """POST /api/sessions/{session_id}/messages — send one message (SSE stream).
 
-    Runs the message through the full storage pipeline (Redis → PostgreSQL →
-    pgvector) and returns the updated session.
+    SSE event shapes:
+      - data: {"delta": "..."}                                    0..N
+      - data: {"done": true, "message": {role, content, ...}}     1
+      - data: [DONE]                                              terminator
+      - event: error / data: {"error": "...", "detail": "..."}    0..1
     """
     _require_uuid(session_id)
-    return _storage(request).handle_user_message(session_id, body.user_id, body.message)
+    storage = _storage(request)
+
+    def event_source():
+        for event in storage.stream_user_message(session_id, body.user_id, body.message):
+            if event["type"] == "delta":
+                yield f"data: {json.dumps({'delta': event['delta']}, ensure_ascii=False)}\n\n"
+            elif event["type"] == "done":
+                yield f"data: {json.dumps({'done': True, 'message': event['message']}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+            elif event["type"] == "error":
+                yield f"event: error\ndata: {json.dumps({'error': event['error'], 'detail': event.get('detail', '')}, ensure_ascii=False)}\n\n"
+                break  # errors are terminal; close the stream
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable proxy buffering (nginx)
+            "Connection": "keep-alive",
+        },
+    )

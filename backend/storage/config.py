@@ -17,6 +17,8 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/chatdb"
 )
+# Agent container HTTP endpoint (host port when Agent runs in docker on this host).
+AGENT_URL = os.getenv("AGENT_URL", "http://localhost:8765")
 
 # Fixed test user for this phase (no auth system).
 DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "user_demo")
