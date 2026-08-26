@@ -87,6 +87,84 @@
     });
   })();
 
+  /* ── Assistant "think" trace dropdown ──
+     Splits <think>...</think> from the rest of an assistant message and
+     renders the trace inside a <details> block. The open/closed state is
+     persisted in localStorage so the user's choice survives a refresh.
+  */
+  function parseThink(text) {
+    var s = String(text == null ? '' : text);
+    var openIdx = s.indexOf('<think>');
+    if (openIdx < 0) return { pre: s, think: null, body: '' };
+    var pre = s.slice(0, openIdx);
+    var afterOpen = s.slice(openIdx + '<think>'.length);
+    var closeIdx = afterOpen.indexOf('</think>');
+    if (closeIdx < 0) return { pre: pre, think: afterOpen, body: '' };
+    return {
+      pre: pre,
+      think: afterOpen.slice(0, closeIdx),
+      // Strip leading whitespace (the "\n\n" Agent emits after </think>) so
+      // .chat-body displays the first character flush against the left edge.
+      body: afterOpen.slice(closeIdx + '</think>'.length).replace(/^\s+/, '')
+    };
+  }
+
+  var THINK_OPEN_KEY = 'think_open';
+  function getThinkOpen() {
+    try {
+      var v = localStorage.getItem(THINK_OPEN_KEY);
+      // Default: open. The user can collapse it, and the choice persists.
+      if (v == null) return true;
+      return v === '1';
+    } catch (e) { return true; }
+  }
+  function setThinkOpen(open) {
+    try { localStorage.setItem(THINK_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
+  }
+
+  // Replaces the content of `parent` (a .chat-message) with the think details
+  // + chat-body for the given text. Preserves any existing first child (the
+  // role label) so this works both for one-shot rendering and for incremental
+  // re-renders during a streaming response.
+  function renderMessageContent(parent, content) {
+    while (parent.childNodes.length > 1) {
+      parent.removeChild(parent.lastChild);
+    }
+    var parts = parseThink(content || '');
+    if (parts.think != null) {
+      var details = document.createElement('details');
+      details.className = 'chat-think';
+      if (getThinkOpen()) details.open = true;
+      details.addEventListener('toggle', function () { setThinkOpen(details.open); });
+      var summary = document.createElement('summary');
+      // Lucide chevron-down (24x24 stroke SVG). Rotated 180° via CSS when
+      // <details> is open so the same icon doubles as chevron-up.
+      var chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      chevron.setAttribute('class', 'chat-think-chevron');
+      chevron.setAttribute('viewBox', '0 0 24 24');
+      chevron.setAttribute('fill', 'none');
+      chevron.setAttribute('stroke', 'currentColor');
+      chevron.setAttribute('stroke-width', '2');
+      chevron.setAttribute('stroke-linecap', 'round');
+      chevron.setAttribute('stroke-linejoin', 'round');
+      var chevronPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      chevronPath.setAttribute('d', 'm6 9 6 6 6-6');
+      chevron.appendChild(chevronPath);
+      summary.appendChild(chevron);
+      summary.appendChild(document.createTextNode('think'));
+      details.appendChild(summary);
+      var thinkBody = document.createElement('div');
+      thinkBody.className = 'chat-think-body';
+      thinkBody.textContent = parts.think;
+      details.appendChild(thinkBody);
+      parent.appendChild(details);
+    }
+    var bodyDiv = document.createElement('div');
+    bodyDiv.className = 'chat-body';
+    bodyDiv.textContent = parts.pre + parts.body;
+    parent.appendChild(bodyDiv);
+  }
+
   /* ── Chat — wired to the Storage Service API ──
      Frontend → HTTP API (/api/sessions/{id}/...) → StorageService → Redis / PostgreSQL / pgvector.
      No Agent / LLM in this phase; the backend returns a clearly-marked MOCK reply.
@@ -138,15 +216,14 @@
     function addMessage(msg) {
       if (!messages) return;
       var div = document.createElement('div');
-      div.className = 'chat-message' + (msg.mock ? ' chat-message-mock' : '');
+      div.className = 'chat-message'
+        + (msg.role === 'user' ? ' chat-message-user' : '')
+        + (msg.mock ? ' chat-message-mock' : '');
       var roleEl = document.createElement('span');
       roleEl.className = 'chat-role';
       roleEl.textContent = msg.role === 'user' ? 'You' : (msg.mock ? 'Agent (Mock)' : 'Agent');
-      var bodyEl = document.createElement('div');
-      bodyEl.className = 'chat-body';
-      bodyEl.textContent = msg.content || '';
       div.appendChild(roleEl);
-      div.appendChild(bodyEl);
+      renderMessageContent(div, msg.content);
       messages.appendChild(div);
       messages.scrollTop = messages.scrollHeight;
     }
@@ -216,15 +293,14 @@
       textarea.style.height = 'auto';
 
       // Pre-create the assistant bubble so we can append text tokens into it.
+      // Only the role label is fixed; renderMessageContent rebuilds the think
+      // details + body each time a delta arrives.
       var bubble = document.createElement('div');
       bubble.className = 'chat-message';
       var roleEl = document.createElement('span');
       roleEl.className = 'chat-role';
       roleEl.textContent = 'Agent';
-      var bodyEl = document.createElement('div');
-      bodyEl.className = 'chat-body';
       bubble.appendChild(roleEl);
-      bubble.appendChild(bodyEl);
       messages.appendChild(bubble);
       messages.scrollTop = messages.scrollHeight;
       var assistantText = '';
@@ -247,13 +323,13 @@
             function onMessage(evt) {
               if (evt && typeof evt.delta === 'string') {
                 assistantText += evt.delta;
-                bodyEl.textContent = assistantText;
+                renderMessageContent(bubble, assistantText);
                 messages.scrollTop = messages.scrollHeight;
               } else if (evt && evt.done && evt.message) {
                 // Server confirmed the final assistant message — replace the
                 // streamed text with the authoritative copy from the server.
                 assistantText = evt.message.content || '';
-                bodyEl.textContent = assistantText;
+                renderMessageContent(bubble, assistantText);
               }
             },
             function onError(err) {
@@ -315,7 +391,16 @@
     var btnClose = document.getElementById('btn-sidebar-close');
     var btnNewInline = document.getElementById('btn-new-session-inline');
     var messagesEl = document.getElementById('messages');
+    var SIDEBAR_OPEN_KEY = 'sidebar_open';
     if (!sidebar || !btnToggle || !btnNew) return;
+
+    // Restore the open/closed state from the previous page load so the user's
+    // choice survives a refresh. Load the session list eagerly (no toggle
+    // handler fires here) so the panel isn't briefly empty.
+    if (localStorage.getItem(SIDEBAR_OPEN_KEY) === '1') {
+      setSidebarOpen(true);
+      loadSidebar();
+    }
 
     function currentSessionId() {
       try { return localStorage.getItem(SESSION_KEY); }
@@ -349,15 +434,14 @@
     function renderMessage(msg) {
       if (!messagesEl || !msg) return;
       var div = document.createElement('div');
-      div.className = 'chat-message' + (msg.mock ? ' chat-message-mock' : '');
+      div.className = 'chat-message'
+        + (msg.role === 'user' ? ' chat-message-user' : '')
+        + (msg.mock ? ' chat-message-mock' : '');
       var roleEl = document.createElement('span');
       roleEl.className = 'chat-role';
       roleEl.textContent = msg.role === 'user' ? 'You' : (msg.mock ? 'Agent (Mock)' : 'Agent');
-      var bodyEl = document.createElement('div');
-      bodyEl.className = 'chat-body';
-      bodyEl.textContent = msg.content || '';
       div.appendChild(roleEl);
-      div.appendChild(bodyEl);
+      renderMessageContent(div, msg.content);
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
@@ -456,6 +540,7 @@
       sidebar.classList.toggle('open', open);
       sidebar.setAttribute('aria-hidden', open ? 'false' : 'true');
       document.body.classList.toggle('sidebar-open', open);
+      try { localStorage.setItem(SIDEBAR_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
     }
 
     function createNewSession() {

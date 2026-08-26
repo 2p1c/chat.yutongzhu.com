@@ -121,8 +121,7 @@ header {
   gap: 2px;
 }
 
-.theme-toggle,
-.lang-toggle {
+.theme-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -134,20 +133,13 @@ header {
   border-radius: 6px;
 }
 
-.theme-toggle:hover,
-.lang-toggle:hover {
+.theme-toggle:hover {
   opacity: 0.65;
 }
 
 .theme-icon {
   width: 22px;
   height: 22px;
-  display: block;
-}
-
-.translate-icon {
-  width: 20px;
-  height: 20px;
   display: block;
 }
 
@@ -699,7 +691,8 @@ h2 {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  padding: 0 2px;
+  /* Right padding > left so the 8px scrollbar doesn't crowd the text. */
+  padding: 0 12px 0 2px;
   scrollbar-gutter: stable;
 }
 
@@ -733,6 +726,13 @@ h2 {
   animation: message-fade-in 0.25s ease-out;
 }
 
+/* User messages sit on the right side of the chat column. */
+.chat-message-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
 @keyframes message-fade-in {
   from { opacity: 0; }
   to   { opacity: 1; }
@@ -740,8 +740,9 @@ h2 {
 
 .chat-message .chat-role {
   display: block;
-  font-size: 0.78rem;
+  font-size: 0.88rem;
   font-weight: 700;
+  
   letter-spacing: 0.04em;
   color: var(--dimmed-text-color);
   margin-bottom: 2px;
@@ -749,6 +750,40 @@ h2 {
 }
 
 .chat-message .chat-body {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Collapsible reasoning trace (<think>...</think>) from assistant messages.
+   Open/closed state is persisted by JS in localStorage (key: think_open).
+   The chevron-down SVG in the summary rotates 180° to become chevron-up. */
+.chat-message .chat-think {
+  font-size: 0.7em;
+  font-style: italic;
+  color: var(--dimmed-text-color);
+  margin: 0em 0;
+}
+.chat-message .chat-think summary {
+  cursor: pointer;
+  user-select: none;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+}
+.chat-message .chat-think summary::-webkit-details-marker { display: none; }
+.chat-message .chat-think-chevron {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.chat-message .chat-think[open] > summary .chat-think-chevron {
+  transform: rotate(180deg);
+}
+.chat-message .chat-think-body {
+  padding: 0.2em 0 0.4em 1em;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
