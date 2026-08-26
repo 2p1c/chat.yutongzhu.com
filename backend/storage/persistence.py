@@ -54,3 +54,39 @@ class PersistenceLayer:
                 cur.execute("SELECT user_id FROM sessions WHERE id = %s", (session_id,))
                 row = cur.fetchone()
         return row["user_id"] if row else None
+
+    def list_sessions(self, user_id: str) -> list:
+        """Return one row per session for a user, newest first.
+
+        Each row carries a `title` derived from the first user-role message (or
+        None for an empty session), plus message_count. Uses the
+        sessions_user_id_updated_at_idx index for the ORDER BY.
+        """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, created_at, updated_at, messages,
+                           jsonb_array_length(messages) AS message_count
+                    FROM sessions
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC
+                    """,
+                    (user_id,),
+                )
+                rows = cur.fetchall()
+        out = []
+        for row in rows:
+            title = None
+            for m in row["messages"] or []:
+                if isinstance(m, dict) and m.get("role") == "user":
+                    title = (m.get("content") or "").strip() or None
+                    break
+            out.append({
+                "session_id": str(row["id"]),
+                "title": title,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "message_count": row["message_count"],
+            })
+        return out

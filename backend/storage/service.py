@@ -9,6 +9,8 @@ Agent Runtime can reuse it unchanged:
     # TODO(Future Agent Runtime): call StorageService here, instead of touching
     # Redis/PostgreSQL directly.
 """
+import uuid
+
 from .cache import CacheLayer
 from .config import CACHE_RECENT_MESSAGES, DEFAULT_USER_ID
 from .embeddings import generate_embedding
@@ -72,6 +74,21 @@ class StorageService:
         messages = self.get_session(session_id)
         user_id = self.persistence.get_user_id(session_id) or DEFAULT_USER_ID
         return {"session_id": session_id, "user_id": user_id, "messages": messages}
+
+    # -- Session lifecycle ------------------------------------------------
+
+    def create_session(self, user_id: str) -> dict:
+        """Pre-create an empty session row so it appears in the sidebar list.
+
+        The first POST /sessions/{id}/messages will reuse this row via upsert.
+        """
+        new_id = str(uuid.uuid4())
+        self.persistence.save_session(new_id, user_id, [])
+        return {"session_id": new_id, "user_id": user_id, "messages": []}
+
+    def list_user_sessions(self, user_id: str) -> list:
+        """Newest-first list of this user's sessions for the sidebar."""
+        return self.persistence.list_sessions(user_id)
 
     # -- Core message flow -------------------------------------------------
 

@@ -32,6 +32,31 @@
   <!-- Animated Vanta cells background (fixed full-viewport, sits below content) -->
   <div id="vanta-bg" aria-hidden="true"></div>
 
+  <!-- Sidebar: full-bleed slide-in from the viewport's left edge -->
+  <aside id="sidebar" class="sidebar" aria-label="Session list" aria-hidden="true">
+    <div class="sidebar-inner">
+      <div class="sidebar-toolbar">
+        <button id="btn-sidebar-close" class="sidebar-toolbar-btn" type="button" aria-label="Close sidebar" title="收起侧边栏">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+        </button>
+        <button id="btn-new-session-inline" class="sidebar-toolbar-btn" type="button" aria-label="New session" title="新建会话">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>
+        </button>
+      </div>
+      <div class="sidebar-list" id="sidebar-list"></div>
+    </div>
+  </aside>
+
+  <!-- Left-edge floating icon rail (panel-left + message-circle-plus) -->
+  <div class="icon-rail">
+    <button id="btn-sidebar-toggle" class="icon-rail-btn" type="button" aria-label="Toggle session list" title="会话列表">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+    </button>
+    <button id="btn-new-session" class="icon-rail-btn" type="button" aria-label="New session" title="新建会话">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>
+    </button>
+  </div>
+
   <div class="page">
     <header>
       <h1><a href="/" style="color: inherit; text-decoration: none;">{ Yutong Zhu }</a></h1>

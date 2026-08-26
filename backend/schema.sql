@@ -33,3 +33,7 @@ CREATE INDEX IF NOT EXISTS memory_vectors_embedding_idx
     ON memory_vectors
     USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
+
+-- Index for "list this user's sessions, newest first" (GET /api/users/{id}/sessions)
+CREATE INDEX IF NOT EXISTS sessions_user_id_updated_at_idx
+    ON sessions (user_id, updated_at DESC);

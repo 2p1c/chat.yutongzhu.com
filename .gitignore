@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 backend/.env
 交付说明.md
+
+*.md
+backend/*.md

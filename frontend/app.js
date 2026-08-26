@@ -203,6 +203,8 @@
           textarea.style.height = 'auto';
           updateSend();
           textarea.focus();
+          // Notify the sidebar IIFE so its `message_count` can refresh.
+          try { window.dispatchEvent(new CustomEvent('chat:message-sent')); } catch (e) {}
         });
     }
 
@@ -224,5 +226,203 @@
   (function () {
     var el = document.getElementById('current-year');
     if (el) el.textContent = new Date().getFullYear();
+  })();
+
+  /* ── Sidebar — icon rail + session list grouped by recency ──
+     Independent from the chat IIFE above: reads the same localStorage key and
+     fetches its own session view on switch. Sends a `chat:message-sent` event
+     after a successful send so the sidebar can refresh its `message_count`.
+  */
+  (function () {
+    var API_BASE = '';
+    var USER_ID = 'user_demo';
+    var SESSION_KEY = 'session_id';
+    var SENT_EVENT = 'chat:message-sent';
+
+    var sidebar = document.getElementById('sidebar');
+    var sidebarList = document.getElementById('sidebar-list');
+    var btnToggle = document.getElementById('btn-sidebar-toggle');
+    var btnNew = document.getElementById('btn-new-session');
+    var btnClose = document.getElementById('btn-sidebar-close');
+    var btnNewInline = document.getElementById('btn-new-session-inline');
+    var messagesEl = document.getElementById('messages');
+    if (!sidebar || !btnToggle || !btnNew) return;
+
+    function currentSessionId() {
+      try { return localStorage.getItem(SESSION_KEY); }
+      catch (e) { return null; }
+    }
+
+    function setCurrentSessionId(id) {
+      try { localStorage.setItem(SESSION_KEY, id); } catch (e) {}
+    }
+
+    // Backend returns "YYYY-MM-DDTHH:MM:SS[.fff]" without a timezone suffix;
+    // treat it as UTC so JS computes day-buckets against the same wall clock
+    // the user sees locally.
+    function parseTime(s) {
+      if (!s) return 0;
+      var needsZ = s.charAt(s.length - 1) !== 'Z' && s.indexOf('+') < 0;
+      return new Date(needsZ ? s + 'Z' : s).getTime();
+    }
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function truncate(s, n) {
+      if (!s) return '新会话';
+      return s.length > n ? s.slice(0, n) + '…' : s;
+    }
+
+    function renderMessage(msg) {
+      if (!messagesEl || !msg) return;
+      var div = document.createElement('div');
+      div.className = 'chat-message' + (msg.mock ? ' chat-message-mock' : '');
+      var roleEl = document.createElement('span');
+      roleEl.className = 'chat-role';
+      roleEl.textContent = msg.role === 'user' ? 'You' : (msg.mock ? 'Agent (Mock)' : 'Agent');
+      var bodyEl = document.createElement('div');
+      bodyEl.className = 'chat-body';
+      bodyEl.textContent = msg.content || '';
+      div.appendChild(roleEl);
+      div.appendChild(bodyEl);
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function renderMessages(list) {
+      if (!messagesEl) return;
+      messagesEl.textContent = '';
+      (list || []).forEach(renderMessage);
+    }
+
+    function loadSessionIntoView(sessionId) {
+      if (!sessionId) { renderMessages([]); return; }
+      fetch(API_BASE + '/api/sessions/' + encodeURIComponent(sessionId))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) { renderMessages((data && data.messages) || []); })
+        .catch(function () { renderMessages([]); });
+    }
+
+    function highlightActive() {
+      var cur = currentSessionId();
+      var items = sidebarList.querySelectorAll('.sidebar-item');
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].getAttribute('data-session-id') === cur) items[i].classList.add('active');
+        else items[i].classList.remove('active');
+      }
+    }
+
+    function bucketize(sessions) {
+      var now = new Date();
+      var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      var sevenDaysAgo = startOfToday - 7 * 24 * 60 * 60 * 1000;
+      var thirtyDaysAgo = startOfToday - 30 * 24 * 60 * 60 * 1000;
+      var groups = { today: [], sevenDays: [], thirtyDays: [] };
+      (sessions || []).forEach(function (s) {
+        var t = parseTime(s.created_at);
+        if (t >= startOfToday) groups.today.push(s);
+        else if (t >= sevenDaysAgo) groups.sevenDays.push(s);
+        else if (t >= thirtyDaysAgo) groups.thirtyDays.push(s);
+        // > 30 days: not shown (per the three-bucket spec)
+      });
+      return groups;
+    }
+
+    function renderSidebar(sessions) {
+      if (!sidebarList) return;
+      var groups = bucketize(sessions);
+      var html = '';
+      var sections = [
+        { key: 'today', label: '今天' },
+        { key: 'sevenDays', label: '7 天内' },
+        { key: 'thirtyDays', label: '30 天内' }
+      ];
+      sections.forEach(function (sec) {
+        var items = groups[sec.key];
+        if (!items.length) return;
+        html += '<div class="sidebar-group">';
+        html += '<div class="sidebar-group-title">' + escapeHtml(sec.label) + '</div>';
+        items.forEach(function (s) {
+          var title = truncate(s.title, 30);
+          html += '<button class="sidebar-item" type="button" '
+            + 'data-session-id="' + escapeHtml(s.session_id) + '" '
+            + 'title="' + escapeHtml(s.title || '新会话') + '">'
+            + escapeHtml(title) + '</button>';
+        });
+        html += '</div>';
+      });
+      if (!html) html = '<div class="sidebar-empty">暂无最近会话</div>';
+      sidebarList.innerHTML = html;
+      highlightActive();
+    }
+
+    function loadSidebar() {
+      fetch(API_BASE + '/api/users/' + encodeURIComponent(USER_ID) + '/sessions')
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (data) { renderSidebar(data || []); })
+        .catch(function (err) {
+          console.error('[sidebar] list failed:', err);
+          if (sidebarList) sidebarList.innerHTML = '<div class="sidebar-empty">无法加载会话列表</div>';
+        });
+    }
+
+    function switchTo(sessionId) {
+      if (!sessionId) return;
+      setCurrentSessionId(sessionId);
+      loadSessionIntoView(sessionId);
+      loadSidebar(); // refresh active highlight + counts
+    }
+
+    function toggleSidebar() {
+      var open = !sidebar.classList.contains('open');
+      setSidebarOpen(open);
+      if (open) loadSidebar();
+    }
+
+    function setSidebarOpen(open) {
+      sidebar.classList.toggle('open', open);
+      sidebar.setAttribute('aria-hidden', open ? 'false' : 'true');
+      document.body.classList.toggle('sidebar-open', open);
+    }
+
+    function createNewSession() {
+      if (btnNew.disabled) return;
+      btnNew.disabled = true;
+      fetch(API_BASE + '/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: USER_ID })
+      })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          if (data && data.session_id) switchTo(data.session_id);
+        })
+        .catch(function (err) {
+          console.error('[sidebar] create session failed:', err);
+          window.alert('新建会话失败');
+        })
+        .then(function () { btnNew.disabled = false; });
+    }
+
+    btnToggle.addEventListener('click', toggleSidebar);
+    btnNew.addEventListener('click', createNewSession);
+    if (btnClose) btnClose.addEventListener('click', function () { setSidebarOpen(false); });
+    if (btnNewInline) btnNewInline.addEventListener('click', createNewSession);
+    sidebarList.addEventListener('click', function (e) {
+      var btn = e.target.closest && e.target.closest('.sidebar-item');
+      if (!btn) return;
+      var sid = btn.getAttribute('data-session-id');
+      if (sid) switchTo(sid);
+    });
+    // Refresh message_count after a chat send. The chat IIFE above dispatches
+    // this event on successful send; refresh only — don't touch current view.
+    window.addEventListener(SENT_EVENT, function () { if (sidebar.classList.contains('open')) loadSidebar(); });
   })();
 })();

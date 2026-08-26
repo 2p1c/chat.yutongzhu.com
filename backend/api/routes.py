@@ -24,6 +24,10 @@ class MessageIn(BaseModel):
     user_id: str = DEFAULT_USER_ID
 
 
+class SessionCreate(BaseModel):
+    user_id: str = DEFAULT_USER_ID
+
+
 def _storage(request: Request) -> StorageService:
     return request.app.state.storage
 
@@ -39,6 +43,26 @@ def _require_uuid(session_id: str) -> str:
 def health(request: Request):
     """Liveness check for the storage service."""
     return {"status": "ok"}
+
+
+@router.post("/sessions")
+def create_session(body: SessionCreate, request: Request):
+    """POST /api/sessions — pre-create an empty session row.
+
+    Returns the new session_id so the sidebar can switch to it without waiting
+    for the first message.
+    """
+    return _storage(request).create_session(body.user_id)
+
+
+@router.get("/users/{user_id}/sessions")
+def list_user_sessions(user_id: str, request: Request):
+    """GET /api/users/{user_id}/sessions — list a user's sessions, newest first.
+
+    Each item: {session_id, title (first user message), created_at, updated_at,
+    message_count}. Title is None for sessions with no user message yet.
+    """
+    return _storage(request).list_user_sessions(user_id)
 
 
 @router.get("/sessions/{session_id}")
