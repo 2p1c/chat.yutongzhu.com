@@ -3,7 +3,7 @@ services:
     image: redis:7-alpine
     container_name: chat-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
@@ -21,7 +21,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: chatdb
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
       # Runs the schema on first volume init; `python init_db.py` re-runs it idempotently later.
@@ -31,6 +31,36 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  # TypeScript Agent (mmagent). Built separately from its own repo:
+  #   docker build -t mmagent /path/to/mmagent
+  # or swap `image:` for `build: /path/to/mmagent` to let compose build it.
+  agent:
+    image: mmagent:latest
+    container_name: chat-agent
+    ports:
+      - "127.0.0.1:8765:8001"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env or shell}
+
+  # FastAPI backend + static frontend (single container serves the website).
+  backend:
+    build: ./backend
+    container_name: chat-backend
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Inside the compose network we dial services by name, not localhost.
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/chatdb
+      AGENT_URL: http://agent:8001
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      agent:
+        condition: service_started
 
 volumes:
   redis-data:
