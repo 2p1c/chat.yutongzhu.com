@@ -32,11 +32,10 @@ services:
       timeout: 3s
       retries: 5
 
-  # TypeScript Agent (mmagent). Built separately from its own repo:
-  #   docker build -t mmagent /path/to/mmagent
-  # or swap `image:` for `build: /path/to/mmagent` to let compose build it.
+  # TypeScript Agent (mmagent). Built and pushed to GHCR by the Agent repo's
+  # CI (my-minimal-agent); this file only consumes the image.
   agent:
-    image: mmagent:latest
+    image: ghcr.io/2p1c/mmagent:latest
     container_name: chat-agent
     ports:
       - "127.0.0.1:8765:8001"
