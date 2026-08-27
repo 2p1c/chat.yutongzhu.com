@@ -41,6 +41,8 @@ services:
       - "127.0.0.1:8765:8001"
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env or shell}
+      MODEL: ${MODEL:?set MODEL in .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:?set OPENAI_BASE_URL in .env}
 
   # FastAPI backend + static frontend (single container serves the website).
   backend:
