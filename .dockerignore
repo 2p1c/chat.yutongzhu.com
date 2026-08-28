@@ -1,0 +1,13 @@
+# Build context is the repo root (see docker-compose.yml: build.context).
+# Keep backend/ and frontend/ source; exclude local junk and secrets.
+
+.git
+.github
+
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.env
+**/.DS_Store
+
+instruction/
