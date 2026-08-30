@@ -1,3 +1,5 @@
+docker-compose.override.yml
+
 instruction/
 instruction.md
 .DS_Store
@@ -11,3 +13,5 @@ backend/.env
 
 *.md
 backend/*.md
+
+.env

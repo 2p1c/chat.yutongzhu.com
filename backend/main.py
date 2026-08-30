@@ -1,22 +1,23 @@
-"""Storage Service — HTTP API + static frontend hosting.
+"""Storage Service — HTTP API.
 
-Run from the backend/ directory:
+Local (with compose `web` on :8000):
 
-    uvicorn main:app --reload --port 8000
+    uvicorn main:app --reload --host 0.0.0.0 --port 8001
 
-The static frontend (frontend/) is served at "/" by this same process,
-so the browser talks to one origin: /api/... for storage, everything else is the
-static site. API routes are registered before the static catch-all mount.
+The static frontend is served by the `web` nginx container, which proxies
+/api to this process so the browser still talks to one origin.
 """
-from pathlib import Path
-
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
 from storage.service import StorageService
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+# Local page is nginx :8000 while uvicorn is :8001 (see frontend/app.js API_BASE).
+_LOCAL_PAGE_ORIGINS = (
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+)
 
 
 def create_app() -> FastAPI:
@@ -25,15 +26,14 @@ def create_app() -> FastAPI:
         description="Three-layer session storage: Redis / PostgreSQL / pgvector.",
         version="0.1.0",
     )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(_LOCAL_PAGE_ORIGINS),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.storage = StorageService()
-
-    # API routes first so /api/... is handled before the static catch-all.
     app.include_router(router)
-
-    # Serve the existing static frontend (index.html / app.css / app.js / vendor).
-    if FRONTEND_DIR.is_dir():
-        app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
-
     return app
 
 
