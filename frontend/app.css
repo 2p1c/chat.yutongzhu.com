@@ -34,7 +34,6 @@
 
 html {
   -webkit-font-smoothing: antialiased;
-  scrollbar-gutter: stable;
   overscroll-behavior: none; /* no rubber-band / overscroll past the top or bottom */
   height: 100%;
   overflow: hidden; /* fixed viewport layout — only the message list scrolls */
@@ -1111,8 +1110,8 @@ body.sidebar-open .icon-rail {
   backdrop-filter: blur(10px) saturate(140%);
 }
 .auth-gate[hidden],
-.loop-debug[hidden],
-.header-logout[hidden] {
+.header-logout[hidden],
+.header-loop-toggle[hidden] {
   display: none !important;
 }
 .auth-card {
@@ -1180,60 +1179,96 @@ body.sidebar-open .icon-rail {
 }
 
 
-/* ── Local Agent loop inspector ── */
+/* ── Local Agent loop inspector (right sidebar, mirrors the left session list) ── */
 .loop-debug {
   position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 60;
-  width: min(360px, calc(100vw - 32px));
-  max-height: 40vh;
+  right: 0;
+  top: 0;
+  height: 100vh;
+  width: 280px;
+  z-index: 40;
+  transform: translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+  will-change: transform, backdrop-filter;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear 0.28s;
+}
+.loop-debug.open {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear 0s;
+}
+.loop-debug-inner {
+  width: 100%;
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--code-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  padding: 14px 10px;
+  background: rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 16px 0 0 16px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.72rem;
   line-height: 1.4;
 }
-.loop-debug-header {
+[data-theme="dark"] .loop-debug-inner {
+  background: rgba(20, 20, 24, 0.4);
+  border-left-color: rgba(255, 255, 255, 0.12);
+}
+.loop-debug-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 4px 6px 10px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.18);
+  flex-shrink: 0;
+}
+.loop-debug-title {
+  flex: 1;
+  min-width: 0;
   color: var(--dimmed-text-color);
   font-family: ui-sans-serif, system-ui, sans-serif;
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  flex-shrink: 0;
 }
 .loop-debug-clear {
   background: none;
   border: none;
   color: var(--link-color);
   cursor: pointer;
-  font: inherit;
-  text-transform: none;
-  letter-spacing: 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
   font-weight: 600;
-  padding: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.loop-debug-clear:hover {
+  background: var(--code-bg);
 }
 .loop-debug-empty {
   margin: 0;
   padding: 8px 10px 10px;
   color: var(--dimmed-text-color);
   font-style: italic;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.88rem;
 }
 .loop-debug-empty[hidden] {
   display: none !important;
 }
 .loop-debug-list {
+  flex: 1;
+  min-height: 0;
   margin: 0;
   padding: 8px 10px 10px;
   overflow-y: auto;

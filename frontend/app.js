@@ -147,20 +147,28 @@
     hint.hidden = list.childNodes.length > 0;
   }
 
-  function showLoopDebugPanel() {
-    if (!isLocalHost()) return;
+  function setLoopDebugOpen(open) {
     var panel = document.getElementById('loop-debug');
+    var toggle = document.getElementById('btn-loop-toggle');
     if (!panel) return;
-    panel.hidden = false;
+    panel.classList.toggle('open', open);
+    panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+    document.body.classList.toggle('loop-debug-open', open);
+    if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    try { localStorage.setItem('loop_debug_open', open ? '1' : '0'); } catch (e) {}
+  }
+
+  function showLoopDebugToggle() {
+    if (!isLocalHost()) return;
+    var toggle = document.getElementById('btn-loop-toggle');
+    if (toggle) toggle.hidden = false;
     updateLoopEmptyHint();
   }
 
   function appendLoopEvent(evt) {
     if (!isLocalHost()) return;
-    var panel = document.getElementById('loop-debug');
     var list = document.getElementById('loop-debug-list');
-    if (!panel || !list) return;
-    panel.hidden = false;
+    if (!list) return;
     var li = document.createElement('li');
     li.className = 'loop-debug-item';
     li.textContent = formatLoopEvent(evt);
@@ -793,11 +801,26 @@
     });
   })();
 
-  /* ── Local loop inspector ── */
+  /* ── Local loop inspector (right sidebar, localhost only) ── */
   (function () {
-    showLoopDebugPanel();
-    var btn = document.getElementById('loop-debug-clear');
-    if (btn) btn.addEventListener('click', clearLoopDebug);
+    showLoopDebugToggle();
+    var toggle = document.getElementById('btn-loop-toggle');
+    var closeBtn = document.getElementById('btn-loop-close');
+    var clearBtn = document.getElementById('loop-debug-clear');
+    var panel = document.getElementById('loop-debug');
+    if (!isLocalHost() || !panel) return;
+    if (toggle) {
+      toggle.addEventListener('click', function () {
+        setLoopDebugOpen(!panel.classList.contains('open'));
+      });
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function () { setLoopDebugOpen(false); });
+    }
+    if (clearBtn) clearBtn.addEventListener('click', clearLoopDebug);
+    try {
+      if (localStorage.getItem('loop_debug_open') === '1') setLoopDebugOpen(true);
+    } catch (e) {}
   })();
 
   /* ── Email OTP gate ── */
