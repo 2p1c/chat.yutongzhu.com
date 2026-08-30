@@ -20,7 +20,10 @@ DATABASE_URL = os.getenv(
 # Agent container HTTP endpoint (host port when Agent runs in docker on this host).
 AGENT_URL = os.getenv("AGENT_URL", "http://localhost:8765")
 
-# Fixed test user for this phase (no auth system).
-DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "user_demo")
 # Size of the Redis cache window (spec: 最近 10 条消息).
 CACHE_RECENT_MESSAGES = int(os.getenv("CACHE_RECENT_MESSAGES", "10"))
+
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM = os.getenv("RESEND_FROM", "yutongzhu <noreply@chat.yutongzhu.site>")
+# Comma-separated emails. Empty string → any address may sign in.
+AUTH_EMAIL_ALLOWLIST = os.getenv("AUTH_EMAIL_ALLOWLIST", "")

@@ -9,6 +9,166 @@
     ? 'http://127.0.0.1:8001'
     : '';
 
+  var AUTH_EVENT = 'chat:ready';
+  var SESSION_KEY = 'session_id';
+
+  function isLocalHost() {
+    return location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+  }
+
+  function apiFetch(path, opts) {
+    opts = opts || {};
+    var headers = {};
+    if (opts.headers) {
+      Object.keys(opts.headers).forEach(function (k) { headers[k] = opts.headers[k]; });
+    }
+    opts.headers = headers;
+    opts.credentials = 'include';
+    return fetch(API_BASE + path, opts);
+  }
+
+  function apiErrorDetail(data, fallback) {
+    if (!data) return fallback;
+    if (typeof data.detail === 'string') return data.detail;
+    if (Array.isArray(data.detail) && data.detail[0] && data.detail[0].msg) {
+      return data.detail[0].msg;
+    }
+    return fallback;
+  }
+
+  function lucideSvg(pathDs, rects) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    (rects || []).forEach(function (r) {
+      var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('width', r.w);
+      rect.setAttribute('height', r.h);
+      rect.setAttribute('x', r.x);
+      rect.setAttribute('y', r.y);
+      rect.setAttribute('rx', r.rx);
+      rect.setAttribute('ry', r.ry);
+      svg.appendChild(rect);
+    });
+    (pathDs || []).forEach(function (d) {
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    });
+    return svg;
+  }
+
+  function copyIcon() {
+    return lucideSvg(
+      ['M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'],
+      [{ w: '14', h: '14', x: '8', y: '8', rx: '2', ry: '2' }]
+    );
+  }
+
+  function checkIcon() {
+    return lucideSvg(['M20 6 9 17l-5-5']);
+  }
+
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'absolute';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).catch(function () {
+        fallbackCopy(text);
+      });
+    }
+    fallbackCopy(text);
+    return Promise.resolve();
+  }
+
+  function flashCopied(btn) {
+    if (btn._copyTimer) clearTimeout(btn._copyTimer);
+    btn.textContent = '';
+    btn.appendChild(checkIcon());
+    btn.setAttribute('aria-label', 'Copied');
+    btn._copyTimer = setTimeout(function () {
+      btn.textContent = '';
+      btn.appendChild(copyIcon());
+      btn.setAttribute('aria-label', 'Copy');
+      btn._copyTimer = null;
+    }, 1500);
+  }
+
+  function formatLoopEvent(evt) {
+    if (!evt || !evt.type) return JSON.stringify(evt);
+    var step = evt.step != null ? ('step ' + evt.step) : 'step ?';
+    if (evt.type === 'llm') {
+      var calls = (evt.toolCalls || []).map(function (c) {
+        return (c.name || '?') + '(' + (c.arguments || '') + ')';
+      }).join(', ');
+      return step + ' · llm' + (calls ? ' · ' + calls : '')
+        + (evt.contentPreview ? '\n' + evt.contentPreview : '');
+    }
+    if (evt.type === 'tool_result') {
+      return step + ' · tool ' + (evt.name || '?')
+        + (evt.resultPreview ? '\n' + evt.resultPreview : '');
+    }
+    if (evt.type === 'final') {
+      return step + ' · final'
+        + (evt.content ? '\n' + evt.content : '');
+    }
+    if (evt.type === 'max_steps') {
+      return step + ' · max steps'
+        + (evt.content ? '\n' + evt.content : '');
+    }
+    return step + ' · ' + evt.type;
+  }
+
+  function clearLoopDebug() {
+    var list = document.getElementById('loop-debug-list');
+    if (list) list.textContent = '';
+    updateLoopEmptyHint();
+  }
+
+  function updateLoopEmptyHint() {
+    var list = document.getElementById('loop-debug-list');
+    var hint = document.getElementById('loop-debug-empty');
+    if (!list || !hint) return;
+    hint.hidden = list.childNodes.length > 0;
+  }
+
+  function showLoopDebugPanel() {
+    if (!isLocalHost()) return;
+    var panel = document.getElementById('loop-debug');
+    if (!panel) return;
+    panel.hidden = false;
+    updateLoopEmptyHint();
+  }
+
+  function appendLoopEvent(evt) {
+    if (!isLocalHost()) return;
+    var panel = document.getElementById('loop-debug');
+    var list = document.getElementById('loop-debug-list');
+    if (!panel || !list) return;
+    panel.hidden = false;
+    var li = document.createElement('li');
+    li.className = 'loop-debug-item';
+    li.textContent = formatLoopEvent(evt);
+    list.appendChild(li);
+    list.scrollTop = list.scrollHeight;
+    updateLoopEmptyHint();
+  }
+
   /* ── Animated Vanta cells background ── */
 
   // Per-theme cell palettes. color1/color2 = cell fill tones, backgroundColor = canvas backdrop.
@@ -171,6 +331,26 @@
     bodyDiv.className = 'chat-body';
     bodyDiv.textContent = parts.pre + parts.body;
     parent.appendChild(bodyDiv);
+    var copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'chat-message-copy';
+    copyBtn.setAttribute('aria-label', 'Copy');
+    copyBtn.setAttribute('title', 'Copy');
+    copyBtn.appendChild(copyIcon());
+    parent.appendChild(copyBtn);
+  }
+
+  function createMessageEl(msg) {
+    var div = document.createElement('div');
+    div.className = 'chat-message'
+      + (msg.role === 'user' ? ' chat-message-user' : '')
+      + (msg.mock ? ' chat-message-mock' : '');
+    var roleEl = document.createElement('span');
+    roleEl.className = 'chat-role';
+    roleEl.textContent = msg.role === 'user' ? 'You' : (msg.mock ? 'Agent (Mock)' : 'Agent');
+    div.appendChild(roleEl);
+    renderMessageContent(div, msg.content);
+    return div;
   }
 
   /* ── Chat — wired to the Storage Service API ──
@@ -196,7 +376,6 @@
 
 
     // Session id persisted in localStorage so a page refresh restores the same session.
-    var SESSION_KEY = 'session_id';
     var sessionId = (function () {
       try {
         var existing = localStorage.getItem(SESSION_KEY);
@@ -223,16 +402,7 @@
     // msg: { role: 'user'|'assistant', content: string, mock?: boolean }
     function addMessage(msg) {
       if (!messages) return;
-      var div = document.createElement('div');
-      div.className = 'chat-message'
-        + (msg.role === 'user' ? ' chat-message-user' : '')
-        + (msg.mock ? ' chat-message-mock' : '');
-      var roleEl = document.createElement('span');
-      roleEl.className = 'chat-role';
-      roleEl.textContent = msg.role === 'user' ? 'You' : (msg.mock ? 'Agent (Mock)' : 'Agent');
-      div.appendChild(roleEl);
-      renderMessageContent(div, msg.content);
-      messages.appendChild(div);
+      messages.appendChild(createMessageEl(msg));
       messages.scrollTop = messages.scrollHeight;
     }
 
@@ -242,19 +412,38 @@
       (list || []).forEach(addMessage);
     }
 
-    // Restore history for this session on page load (refresh → same session).
-    fetch(API_BASE + '/api/sessions/' + sessionId)
-      .then(function (r) { return r.json(); })
-      .then(function (data) { render(data.messages); })
-      .catch(function (err) {
-        console.error('[chat] failed to restore session:', err);
-        addMessage({ role: 'assistant', mock: true, content: '[Storage service unreachable — is the backend running?]' });
-      });
+    function restoreSession() {
+      var sid;
+      try { sid = localStorage.getItem(SESSION_KEY) || sessionId; }
+      catch (e) { sid = sessionId; }
+      sessionId = sid;
+      apiFetch('/api/sessions/' + sid)
+        .then(function (r) {
+          if (r.status === 401) return null;
+          if (r.status === 404) {
+            var fresh = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+            try { localStorage.setItem(SESSION_KEY, fresh); } catch (e) {}
+            sessionId = fresh;
+            render([]);
+            return null;
+          }
+          return r.ok ? r.json() : null;
+        })
+        .then(function (data) {
+          if (data) render(data.messages);
+        })
+        .catch(function (err) {
+          console.error('[chat] failed to restore session:', err);
+          addMessage({ role: 'assistant', mock: true, content: '[Storage service unreachable — is the backend running?]' });
+        });
+    }
+
+    window.addEventListener(AUTH_EVENT, restoreSession);
 
     // Parse an SSE stream from a ReadableStream reader.
     // onMessage(json), onError(json) receive parsed JSON from `data:` lines.
     // The terminator `[DONE]` resolves; `event: error` rejects.
-    function readSSE(reader, onMessage, onError) {
+    function readSSE(reader, onMessage, onError, onLoop) {
       var decoder = new TextDecoder('utf-8');
       var buffer = '';
       function pump() {
@@ -280,6 +469,10 @@
             var json = null;
             try { json = JSON.parse(data); } catch (e) { continue; }
             if (eventName === 'error') throw { sseError: true, payload: json };
+            if (eventName === 'loop') {
+              if (onLoop) onLoop(json);
+              continue;
+            }
             onMessage(json);
           }
           return pump();
@@ -319,12 +512,18 @@
         addMessage({ role: 'assistant', mock: true, content: '[Send failed — ' + reason + ']' });
       }
 
-      fetch(API_BASE + '/api/sessions/' + sessionId + '/messages', {
+      var sid;
+      try { sid = localStorage.getItem(SESSION_KEY) || sessionId; }
+      catch (e) { sid = sessionId; }
+
+      clearLoopDebug();
+      apiFetch('/api/sessions/' + sid + '/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, user_id: 'user_demo' })
+        body: JSON.stringify({ message: text })
       })
         .then(function (r) {
+          if (r.status === 401) throw new Error('not authenticated');
           if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
           return readSSE(
             r.body.getReader(),
@@ -342,7 +541,8 @@
             },
             function onError(err) {
               failAndCleanup((err && err.payload && (err.payload.detail || err.payload.error)) || 'agent error');
-            }
+            },
+            appendLoopEvent
           );
         })
         .catch(function (err) {
@@ -387,8 +587,6 @@
      after a successful send so the sidebar can refresh its `message_count`.
   */
   (function () {
-    var USER_ID = 'user_demo';
-    var SESSION_KEY = 'session_id';
     var SENT_EVENT = 'chat:message-sent';
 
     var sidebar = document.getElementById('sidebar');
@@ -406,7 +604,6 @@
     // handler fires here) so the panel isn't briefly empty.
     if (localStorage.getItem(SIDEBAR_OPEN_KEY) === '1') {
       setSidebarOpen(true);
-      loadSidebar();
     }
 
     function currentSessionId() {
@@ -440,16 +637,7 @@
 
     function renderMessage(msg) {
       if (!messagesEl || !msg) return;
-      var div = document.createElement('div');
-      div.className = 'chat-message'
-        + (msg.role === 'user' ? ' chat-message-user' : '')
-        + (msg.mock ? ' chat-message-mock' : '');
-      var roleEl = document.createElement('span');
-      roleEl.className = 'chat-role';
-      roleEl.textContent = msg.role === 'user' ? 'You' : (msg.mock ? 'Agent (Mock)' : 'Agent');
-      div.appendChild(roleEl);
-      renderMessageContent(div, msg.content);
-      messagesEl.appendChild(div);
+      messagesEl.appendChild(createMessageEl(msg));
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
@@ -461,7 +649,7 @@
 
     function loadSessionIntoView(sessionId) {
       if (!sessionId) { renderMessages([]); return; }
-      fetch(API_BASE + '/api/sessions/' + encodeURIComponent(sessionId))
+      apiFetch('/api/sessions/' + encodeURIComponent(sessionId))
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) { renderMessages((data && data.messages) || []); })
         .catch(function () { renderMessages([]); });
@@ -521,7 +709,7 @@
     }
 
     function loadSidebar() {
-      fetch(API_BASE + '/api/users/' + encodeURIComponent(USER_ID) + '/sessions')
+      apiFetch('/api/me/sessions')
         .then(function (r) { return r.ok ? r.json() : []; })
         .then(function (data) { renderSidebar(data || []); })
         .catch(function (err) {
@@ -553,10 +741,10 @@
     function createNewSession() {
       if (btnNew.disabled) return;
       btnNew.disabled = true;
-      fetch(API_BASE + '/api/sessions', {
+      apiFetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: USER_ID })
+        body: '{}'
       })
         .then(function (r) {
           if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -585,5 +773,144 @@
     // Refresh message_count after a chat send. The chat IIFE above dispatches
     // this event on successful send; refresh only — don't touch current view.
     window.addEventListener(SENT_EVENT, function () { if (sidebar.classList.contains('open')) loadSidebar(); });
+    window.addEventListener(AUTH_EVENT, function () {
+      if (sidebar.classList.contains('open')) loadSidebar();
+    });
+  })();
+
+  /* ── Copy button (event delegation so streaming re-renders keep working) ── */
+  (function () {
+    var messagesEl = document.getElementById('messages');
+    if (!messagesEl) return;
+    messagesEl.addEventListener('click', function (e) {
+      var btn = e.target.closest && e.target.closest('.chat-message-copy');
+      if (!btn) return;
+      e.preventDefault();
+      var msg = btn.closest('.chat-message');
+      var body = msg && msg.querySelector('.chat-body');
+      var text = body ? (body.textContent || '') : '';
+      copyText(text).then(function () { flashCopied(btn); });
+    });
+  })();
+
+  /* ── Local loop inspector ── */
+  (function () {
+    showLoopDebugPanel();
+    var btn = document.getElementById('loop-debug-clear');
+    if (btn) btn.addEventListener('click', clearLoopDebug);
+  })();
+
+  /* ── Email OTP gate ── */
+  (function () {
+    var gate = document.getElementById('auth-gate');
+    var form = document.getElementById('auth-form');
+    var emailInput = document.getElementById('auth-email');
+    var codeWrap = document.getElementById('auth-code-wrap');
+    var codeInput = document.getElementById('auth-code');
+    var errorEl = document.getElementById('auth-error');
+    var submitBtn = document.getElementById('auth-submit');
+    var logoutBtn = document.getElementById('btn-logout');
+    if (!gate || !form || !emailInput || !submitBtn) return;
+
+    var awaitingCode = false;
+
+    function setAuthError(msg) {
+      if (!errorEl) return;
+      if (!msg) {
+        errorEl.hidden = true;
+        errorEl.textContent = '';
+        return;
+      }
+      errorEl.hidden = false;
+      errorEl.textContent = msg;
+    }
+
+    function setVerifyMode(on) {
+      awaitingCode = on;
+      if (codeWrap) codeWrap.hidden = !on;
+      var sends = form.querySelectorAll('[data-auth-send]');
+      var verifies = form.querySelectorAll('[data-auth-verify]');
+      for (var i = 0; i < sends.length; i++) sends[i].hidden = on;
+      for (var j = 0; j < verifies.length; j++) verifies[j].hidden = !on;
+      if (on && codeInput) codeInput.focus();
+    }
+
+    function showGate() {
+      gate.hidden = false;
+      if (logoutBtn) logoutBtn.hidden = true;
+      setVerifyMode(false);
+      setAuthError('');
+      if (emailInput) emailInput.focus();
+    }
+
+    function hideGate() {
+      gate.hidden = true;
+      if (logoutBtn) logoutBtn.hidden = false;
+    }
+
+    function onLoggedIn() {
+      hideGate();
+      try { window.dispatchEvent(new CustomEvent(AUTH_EVENT)); } catch (e) {}
+    }
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var email = emailInput.value.trim();
+      if (!email) return;
+      setAuthError('');
+      submitBtn.disabled = true;
+      var path = awaitingCode ? '/api/auth/verify' : '/api/auth/request';
+      var body = awaitingCode
+        ? { email: email, code: (codeInput && codeInput.value.trim()) || '' }
+        : { email: email };
+      apiFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+        .then(function (r) {
+          return r.json().then(function (data) {
+            return { ok: r.ok, status: r.status, data: data };
+          }).catch(function () {
+            return { ok: r.ok, status: r.status, data: null };
+          });
+        })
+        .then(function (res) {
+          if (!res.ok) {
+            setAuthError(apiErrorDetail(res.data, 'request failed (' + res.status + ')'));
+            return;
+          }
+          if (awaitingCode) {
+            onLoggedIn();
+            return;
+          }
+          setVerifyMode(true);
+        })
+        .catch(function (err) {
+          setAuthError((err && err.message) || 'network error');
+        })
+        .then(function () { submitBtn.disabled = false; });
+    });
+
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', function () {
+        apiFetch('/api/auth/logout', { method: 'POST' })
+          .catch(function () {})
+          .then(function () {
+            showGate();
+            var messagesEl = document.getElementById('messages');
+            if (messagesEl) messagesEl.textContent = '';
+            var list = document.getElementById('sidebar-list');
+            if (list) list.innerHTML = '';
+          });
+      });
+    }
+
+    apiFetch('/api/me')
+      .then(function (r) {
+        if (r.ok) onLoggedIn();
+        else showGate();
+      })
+      .catch(function () { showGate(); });
   })();
 })();

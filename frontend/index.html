@@ -62,6 +62,9 @@
       <h1><a href="/" style="color: inherit; text-decoration: none;">{ Yutong Zhu }</a></h1>
       <span class="subtitle">developer • student • robot</span>
       <div class="header-actions">
+        <button id="btn-logout" class="theme-toggle header-logout" type="button" hidden aria-label="Log out" title="Log out">
+          <svg class="theme-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg>
+        </button>
         <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle light / dark mode">
           <svg class="theme-icon theme-icon-sun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
           <svg class="theme-icon theme-icon-moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
@@ -85,6 +88,40 @@
       <p>© Copyright <span id="current-year"></span> by Yutong Zhu.</p>
     </footer>
   </div>
+
+  <div id="auth-gate" class="auth-gate" hidden>
+    <form id="auth-form" class="auth-card">
+      <h2 class="lang-en">Sign in</h2>
+      <h2 class="lang-zh">登录</h2>
+      <p class="auth-lead lang-en">Enter your email and we’ll send a 6-digit code.</p>
+      <p class="auth-lead lang-zh">输入邮箱，我们会发送 6 位验证码。</p>
+      <label class="auth-label" for="auth-email">Email</label>
+      <input id="auth-email" class="auth-input" type="email" required autocomplete="email" spellcheck="false">
+      <div id="auth-code-wrap" hidden>
+        <label class="auth-label" for="auth-code">
+          <span class="lang-en">Code</span>
+          <span class="lang-zh">验证码</span>
+        </label>
+        <input id="auth-code" class="auth-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" spellcheck="false">
+      </div>
+      <p id="auth-error" class="auth-error" hidden></p>
+      <button id="auth-submit" class="auth-submit" type="submit">
+        <span class="lang-en" data-auth-send>Send code</span>
+        <span class="lang-zh" data-auth-send>发送验证码</span>
+        <span class="lang-en" data-auth-verify hidden>Verify</span>
+        <span class="lang-zh" data-auth-verify hidden>验证</span>
+      </button>
+    </form>
+  </div>
+
+  <aside id="loop-debug" class="loop-debug" hidden>
+    <div class="loop-debug-header">
+      <span>Agent loop</span>
+      <button id="loop-debug-clear" class="loop-debug-clear" type="button">Clear</button>
+    </div>
+    <p id="loop-debug-empty" class="loop-debug-empty">发一条消息后，这里会逐步显示每次 loop</p>
+    <ol id="loop-debug-list" class="loop-debug-list"></ol>
+  </aside>
 
   <script src="/vendor/three.min.js"></script>
   <script src="/vendor/vanta.cells.min.js"></script>

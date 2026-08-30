@@ -13,7 +13,7 @@ import requests
 
 from agent_client import AgentRuntime
 from .cache import CacheLayer
-from .config import CACHE_RECENT_MESSAGES, DEFAULT_USER_ID
+from .config import CACHE_RECENT_MESSAGES
 from .embeddings import generate_embedding
 from .persistence import PersistenceLayer
 from .semantic import SemanticLayer
@@ -71,11 +71,21 @@ class StorageService:
 
     # -- Composite read ---------------------------------------------------
 
-    def get_full_session(self, session_id: str) -> dict:
-        """Session view for the GET API: messages + resolved user_id."""
-        messages = self.get_session(session_id)
-        user_id = self.persistence.get_user_id(session_id) or DEFAULT_USER_ID
+    def get_full_session(self, session_id: str, user_id: str) -> dict:
+        """Session view for the GET API. Unknown ids look empty; others' sessions 404."""
+        owner = self.persistence.get_user_id(session_id)
+        if owner is not None and owner != user_id:
+            return None
+        messages = self.get_session(session_id) if owner is not None else []
         return {"session_id": session_id, "user_id": user_id, "messages": messages}
+
+    def session_owned_by(self, session_id: str, user_id: str) -> bool:
+        """True if the row is missing (first write) or belongs to this user."""
+        owner = self.persistence.get_user_id(session_id)
+        return owner is None or owner == user_id
+
+    def get_or_create_user(self, email: str) -> dict:
+        return self.persistence.get_or_create_user(email)
 
     # -- Session lifecycle ------------------------------------------------
 
@@ -131,9 +141,18 @@ class StorageService:
             ):
                 if event["type"] == "delta":
                     yield {"type": "delta", "delta": event["delta"]}
+                elif event["type"] == "loop":
+                    yield {"type": "loop", "event": event["event"]}
                 elif event["type"] == "done":
                     assistant_message = event["message"]
                     break
+                elif event["type"] == "error":
+                    yield {
+                        "type": "error",
+                        "error": event.get("error", "agent_error"),
+                        "detail": event.get("detail", ""),
+                    }
+                    return
         except requests.RequestException as exc:
             yield {"type": "error", "error": "agent_unreachable", "detail": str(exc)}
             return

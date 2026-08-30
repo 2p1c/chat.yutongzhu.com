@@ -10,11 +10,11 @@ runtime may take seconds; the browser renders tokens as they arrive.
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from storage.config import DEFAULT_USER_ID
+from auth.deps import get_current_user
 from storage.service import StorageService
 
 router = APIRouter(prefix="/api")
@@ -22,11 +22,6 @@ router = APIRouter(prefix="/api")
 
 class MessageIn(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
-    user_id: str = DEFAULT_USER_ID
-
-
-class SessionCreate(BaseModel):
-    user_id: str = DEFAULT_USER_ID
 
 
 def _storage(request: Request) -> StorageService:
@@ -40,6 +35,10 @@ def _require_uuid(session_id: str) -> str:
         raise HTTPException(status_code=400, detail=f"invalid session_id: {session_id!r}")
 
 
+def _user_id(user: dict) -> str:
+    return user["user_id"]
+
+
 @router.get("/health")
 def health(request: Request):
     """Liveness check for the storage service."""
@@ -47,37 +46,38 @@ def health(request: Request):
 
 
 @router.post("/sessions")
-def create_session(body: SessionCreate, request: Request):
-    """POST /api/sessions — pre-create an empty session row.
-
-    Returns the new session_id so the sidebar can switch to it without waiting
-    for the first message.
-    """
-    return _storage(request).create_session(body.user_id)
+def create_session(request: Request, user: dict = Depends(get_current_user)):
+    """POST /api/sessions — pre-create an empty session row for the current user."""
+    return _storage(request).create_session(_user_id(user))
 
 
-@router.get("/users/{user_id}/sessions")
-def list_user_sessions(user_id: str, request: Request):
-    """GET /api/users/{user_id}/sessions — list a user's sessions, newest first.
-
-    Each item: {session_id, title (first user message), created_at, updated_at,
-    message_count}. Title is None for sessions with no user message yet.
-    """
-    return _storage(request).list_user_sessions(user_id)
+@router.get("/me/sessions")
+def list_my_sessions(request: Request, user: dict = Depends(get_current_user)):
+    """GET /api/me/sessions — list the current user's sessions, newest first."""
+    return _storage(request).list_user_sessions(_user_id(user))
 
 
 @router.get("/sessions/{session_id}")
-def get_session(session_id: str, request: Request):
+def get_session(session_id: str, request: Request, user: dict = Depends(get_current_user)):
     """GET /api/sessions/{session_id} — fetch the current session."""
     _require_uuid(session_id)
-    return _storage(request).get_full_session(session_id)
+    data = _storage(request).get_full_session(session_id, _user_id(user))
+    if data is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return data
 
 
 @router.post("/sessions/{session_id}/messages")
-def post_message(session_id: str, body: MessageIn, request: Request):
+def post_message(
+    session_id: str,
+    body: MessageIn,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     """POST /api/sessions/{session_id}/messages — send one message (SSE stream).
 
     SSE event shapes:
+      - event: loop / data: {type, step, ...}                     0..N (local Agent)
       - data: {"delta": "..."}                                    0..N
       - data: {"done": true, "message": {role, content, ...}}     1
       - data: [DONE]                                              terminator
@@ -85,10 +85,18 @@ def post_message(session_id: str, body: MessageIn, request: Request):
     """
     _require_uuid(session_id)
     storage = _storage(request)
+    uid = _user_id(user)
+    if not storage.session_owned_by(session_id, uid):
+        raise HTTPException(status_code=404, detail="session not found")
 
     def event_source():
-        for event in storage.stream_user_message(session_id, body.user_id, body.message):
-            if event["type"] == "delta":
+        for event in storage.stream_user_message(session_id, uid, body.message):
+            if event["type"] == "loop":
+                yield (
+                    "event: loop\n"
+                    f"data: {json.dumps(event['event'], ensure_ascii=False)}\n\n"
+                )
+            elif event["type"] == "delta":
                 yield f"data: {json.dumps({'delta': event['delta']}, ensure_ascii=False)}\n\n"
             elif event["type"] == "done":
                 yield f"data: {json.dumps({'done': True, 'message': event['message']}, ensure_ascii=False)}\n\n"

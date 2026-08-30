@@ -788,6 +788,35 @@ h2 {
   word-wrap: break-word;
 }
 
+.chat-message-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--dimmed-text-color);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.chat-message-copy:hover {
+  color: var(--text-color);
+}
+.chat-message:hover .chat-message-copy,
+.chat-message-copy:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .chat-message-copy { opacity: 1; }
+}
+.chat-message-copy svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 /* Mock assistant replies (storage demo phase — no real Agent / LLM yet) */
 .chat-message-mock .chat-role {
   font-style: italic;
@@ -1066,4 +1095,156 @@ body.sidebar-open .icon-rail {
   color: var(--dimmed-text-color);
   font-style: italic;
   font-size: 0.88rem;
+}
+
+/* ── Login gate ── */
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
+}
+.auth-gate[hidden],
+.loop-debug[hidden],
+.header-logout[hidden] {
+  display: none !important;
+}
+.auth-card {
+  width: 100%;
+  max-width: 360px;
+  padding: 28px 24px 24px;
+  background: var(--content-glass);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+.auth-card h2 {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+  padding: 0;
+}
+.auth-lead {
+  margin: 0 0 16px;
+  color: var(--dimmed-text-color);
+  font-size: 0.95rem;
+}
+.auth-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--dimmed-text-color);
+  margin-bottom: 6px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.auth-input {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  font: inherit;
+  font-size: 1rem;
+  background: var(--background-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+.auth-error {
+  color: #cc0000;
+  font-size: 0.88rem;
+  margin: 0 0 12px;
+}
+.auth-submit {
+  width: 100%;
+  padding: 10px 16px;
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: none;
+  border-radius: 8px;
+}
+.auth-submit:hover:not(:disabled) {
+  background: var(--btn-bg-hover);
+}
+.auth-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+
+/* ── Local Agent loop inspector ── */
+.loop-debug {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 40vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--code-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+.loop-debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--dimmed-text-color);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.loop-debug-clear {
+  background: none;
+  border: none;
+  color: var(--link-color);
+  cursor: pointer;
+  font: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  padding: 0;
+}
+.loop-debug-empty {
+  margin: 0;
+  padding: 8px 10px 10px;
+  color: var(--dimmed-text-color);
+  font-style: italic;
+}
+.loop-debug-empty[hidden] {
+  display: none !important;
+}
+.loop-debug-list {
+  margin: 0;
+  padding: 8px 10px 10px;
+  overflow-y: auto;
+  list-style: none;
+}
+.loop-debug-item {
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-color);
+}
+.loop-debug-item:last-child {
+  margin-bottom: 0;
 }

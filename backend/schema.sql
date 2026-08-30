@@ -1,14 +1,19 @@
--- Three-layer storage schema (Persistence + Semantic layers).
+-- Storage schema (Persistence + Semantic + users).
 -- The Cache Layer (Redis) needs no DDL.
 --
 -- This file is idempotent: it can run on every boot via
 --     docker-entrypoint-initdb.d/01_schema.sql  (fresh volume)
 -- or manually via
 --     python init_db.py
---
--- Only two business tables are allowed (spec section 10): sessions, memory_vectors.
 
 CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Email-login identities. sessions.user_id stores users.id as text.
+CREATE TABLE IF NOT EXISTS users (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email      TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
 
 -- ① Persistence Layer — full session history (messages as JSONB)
 CREATE TABLE IF NOT EXISTS sessions (

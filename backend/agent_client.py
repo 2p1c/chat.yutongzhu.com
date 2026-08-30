@@ -40,10 +40,12 @@ class AgentRuntime:
     def stream(self, *, session_id: str, user_id: str, messages: list) -> Iterator[dict]:
         """Streaming: POST /complete/stream. Yields dicts:
 
-          - {"type": "delta", "delta": "..."}    (0..N)
+          - {"type": "loop",  "event": {...}}    0..N  (local Agent only)
+          - {"type": "delta", "delta": "..."}    0..N
           - {"type": "done",  "message": {...}}  (exactly 1, last)
 
         Stops early on Agent 5xx (the exception propagates to the caller).
+        Older Agent images that never send `event: loop` still work.
         """
         with requests.post(
             f"{self.url}/complete/stream",
@@ -52,21 +54,41 @@ class AgentRuntime:
             stream=True,
         ) as r:
             r.raise_for_status()
+            event_name = "message"
             # Keep raw bytes — Agent's Content-Type lacks charset so requests
             # would otherwise default to Latin-1 and produce mojibake on UTF-8.
             for raw_line in r.iter_lines():
                 if raw_line is None:
                     continue
                 line = raw_line.decode("utf-8") if isinstance(raw_line, (bytes, bytearray)) else raw_line
-                if not line or not line.startswith("data:"):
+                if not line:
+                    event_name = "message"
+                    continue
+                if line.startswith("event:"):
+                    event_name = line[len("event:"):].strip()
+                    continue
+                if not line.startswith("data:"):
                     continue
                 payload = line[len("data:"):].strip()
                 if not payload or payload == "[DONE]":
+                    event_name = "message"
                     continue
                 try:
                     evt = json.loads(payload)
                 except json.JSONDecodeError:
+                    event_name = "message"
                     continue
+                if event_name == "loop":
+                    yield {"type": "loop", "event": evt}
+                    event_name = "message"
+                    continue
+                if event_name == "error" or (isinstance(evt, dict) and evt.get("error")):
+                    yield {
+                        "type": "error",
+                        "error": evt.get("error", "agent_error") if isinstance(evt, dict) else "agent_error",
+                        "detail": evt.get("detail", "") if isinstance(evt, dict) else str(evt),
+                    }
+                    return
                 if "delta" in evt:
                     delta = evt["delta"]
                     if isinstance(delta, str):
@@ -78,3 +100,4 @@ class AgentRuntime:
                     if isinstance(content, str):
                         message["content"] = _utf8_text(content)
                     yield {"type": "done", "message": message}
+                event_name = "message"

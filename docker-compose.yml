@@ -53,6 +53,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/chatdb
       AGENT_URL: http://agent:8001
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-yutongzhu <noreply@chat.yutongzhu.site>}
+      AUTH_EMAIL_ALLOWLIST: ${AUTH_EMAIL_ALLOWLIST:-}
     depends_on:
       redis:
         condition: service_healthy

@@ -90,3 +90,30 @@ class PersistenceLayer:
                 "message_count": row["message_count"],
             })
         return out
+
+    def get_or_create_user(self, email: str) -> dict:
+        """Insert a users row for this email, or return the existing one."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (email) VALUES (%s)
+                    ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+                    RETURNING id, email
+                    """,
+                    (email,),
+                )
+                row = cur.fetchone()
+        return {"id": str(row["id"]), "email": row["email"]}
+
+    def get_user(self, user_id: str):
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, email FROM users WHERE id = %s",
+                    (user_id,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        return {"id": str(row["id"]), "email": row["email"]}

@@ -1,6 +1,10 @@
 # Copy to docker-compose.override.yml (gitignored).
 # Compose merges this automatically: local `web` proxies /api to host uvicorn :8001.
 # Do not place this file on the production server.
+#
+# To watch Agent loop events from source (recommended locally):
+#   1. Do not start the GHCR `agent` service (`docker compose up redis postgres web`).
+#   2. In ../minimal-agent-ts: PORT=8765 npm run server
 
 services:
   web:

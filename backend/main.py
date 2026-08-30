@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
+from auth.routes import router as auth_router
 from storage.service import StorageService
 
 # Local page is nginx :8000 while uvicorn is :8001 (see frontend/app.js API_BASE).
@@ -29,11 +30,13 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(_LOCAL_PAGE_ORIGINS),
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.state.storage = StorageService()
     app.include_router(router)
+    app.include_router(auth_router)
     return app
 
 
