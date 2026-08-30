@@ -1,6 +1,14 @@
 (function () {
   'use strict';
 
+  // Production: same origin (nginx proxies /api). Local: Docker Desktop
+  // drops SSE from the web container to host uvicorn, so the browser talks
+  // to :8001 directly.
+  var API_BASE = (location.port === '8000' &&
+    (location.hostname === '127.0.0.1' || location.hostname === 'localhost'))
+    ? 'http://127.0.0.1:8001'
+    : '';
+
   /* ── Animated Vanta cells background ── */
 
   // Per-theme cell palettes. color1/color2 = cell fill tones, backgroundColor = canvas backdrop.
@@ -184,8 +192,8 @@
       inputBox.addEventListener('focusout', function () { page.classList.remove('chat-focus'); });
     }
 
-    // Same origin: the backend serves both /api and the static frontend.
-    var API_BASE = '';
+    // API_BASE is set at the top of this file.
+
 
     // Session id persisted in localStorage so a page refresh restores the same session.
     var SESSION_KEY = 'session_id';
@@ -379,7 +387,6 @@
      after a successful send so the sidebar can refresh its `message_count`.
   */
   (function () {
-    var API_BASE = '';
     var USER_ID = 'user_demo';
     var SESSION_KEY = 'session_id';
     var SENT_EVENT = 'chat:message-sent';

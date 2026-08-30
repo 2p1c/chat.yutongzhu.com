@@ -1,0 +1,10 @@
+# Copy to docker-compose.override.yml (gitignored).
+# Compose merges this automatically: local `web` proxies /api to host uvicorn :8001.
+# Do not place this file on the production server.
+
+services:
+  web:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./frontend/nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro

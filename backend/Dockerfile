@@ -1,17 +1,12 @@
-# Build context is the REPO ROOT (see docker-compose.yml: build.context),
-# so backend/ and frontend/ keep their on-disk relative layout: main.py
-# resolves the frontend as `parent.parent / "frontend"`.
 FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
-COPY backend/ backend/
-COPY frontend/ frontend/
+COPY . .
 
-WORKDIR /app/backend
 EXPOSE 8000
 
 # init_db.py is idempotent (CREATE ... IF NOT EXISTS), safe to run on every start.

@@ -101,8 +101,9 @@ def post_message(session_id: str, body: MessageIn, request: Request):
         event_source(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",  # disable proxy buffering (nginx)
+            "Content-Encoding": "identity",
             "Connection": "keep-alive",
         },
     )

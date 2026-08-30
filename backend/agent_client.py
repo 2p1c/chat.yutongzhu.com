@@ -14,6 +14,13 @@ from storage.config import AGENT_URL
 REQUEST_TIMEOUT_SECONDS = 120
 
 
+def _utf8_text(value: str) -> str:
+    # JS string.slice can split an emoji into a lone UTF-16 surrogate; Python
+    # json.loads keeps it, then Starlette's SSE encode('utf-8') raises.
+    return value.encode("utf-8", "replace").decode("utf-8")
+
+
+
 class AgentRuntime:
     """HTTP client for the Agent container."""
 
@@ -61,6 +68,13 @@ class AgentRuntime:
                 except json.JSONDecodeError:
                     continue
                 if "delta" in evt:
-                    yield {"type": "delta", "delta": evt["delta"]}
+                    delta = evt["delta"]
+                    if isinstance(delta, str):
+                        delta = _utf8_text(delta)
+                    yield {"type": "delta", "delta": delta}
                 elif evt.get("done") and isinstance(evt.get("message"), dict):
-                    yield {"type": "done", "message": evt["message"]}
+                    message = dict(evt["message"])
+                    content = message.get("content")
+                    if isinstance(content, str):
+                        message["content"] = _utf8_text(content)
+                    yield {"type": "done", "message": message}

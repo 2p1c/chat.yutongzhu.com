@@ -22,7 +22,7 @@ jobs:
             cd '$DEPLOY_PATH'
             git pull
             docker compose build backend
-            docker compose up -d --no-deps backend
+            docker compose up -d --no-deps backend web
             docker image prune -f
           "
           rm -f ~/chat_yutongzhu_com
