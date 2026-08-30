@@ -3,7 +3,7 @@
 # resolves the frontend as `parent.parent / "frontend"`.
 FROM python:3.12-slim
 
-WORKDIR /srv
+WORKDIR /app
 
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r backend/requirements.txt -i https://mirrors.al
 COPY backend/ backend/
 COPY frontend/ frontend/
 
-WORKDIR /srv/backend
+WORKDIR /app/backend
 EXPOSE 8000
 
 # init_db.py is idempotent (CREATE ... IF NOT EXISTS), safe to run on every start.
