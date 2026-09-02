@@ -23,6 +23,8 @@ class StorageService:
     """Unified entry point for all storage operations."""
 
     RECENT_MESSAGES = CACHE_RECENT_MESSAGES  # Redis cache window (最近 N 条)
+    GUEST_ID_PREFIX = "guest:"
+    GUEST_MAX_SESSIONS = 5
 
     def __init__(self, cache=None, persistence=None, semantic=None, agent=None):
         self.cache = cache or CacheLayer()
@@ -89,18 +91,40 @@ class StorageService:
 
     # -- Session lifecycle ------------------------------------------------
 
+    def list_user_sessions(self, user_id: str) -> list:
+        """Newest-first list of this user's sessions for the sidebar."""
+        return self.persistence.list_sessions(user_id)
+
+    def _is_guest(self, user_id: str) -> bool:
+        return (user_id or "").startswith(self.GUEST_ID_PREFIX)
+
+    def _drop_cached_sessions(self, session_ids: list) -> None:
+        for sid in session_ids:
+            self.cache.delete_session(sid)
+
+    def ensure_guest_room(self, user_id: str) -> None:
+        """If this guest already has 5 sessions, delete the oldest until there is room for one more."""
+        if not self._is_guest(user_id):
+            return
+        overflow = self.persistence.count_sessions(user_id) - (self.GUEST_MAX_SESSIONS - 1)
+        if overflow <= 0:
+            return
+        deleted = self.persistence.delete_oldest_sessions(user_id, overflow)
+        self._drop_cached_sessions(deleted)
+
+    def delete_user_sessions(self, user_id: str) -> None:
+        deleted = self.persistence.delete_sessions_for_user(user_id)
+        self._drop_cached_sessions(deleted)
+
     def create_session(self, user_id: str) -> dict:
         """Pre-create an empty session row so it appears in the sidebar list.
 
         The first POST /sessions/{id}/messages will reuse this row via upsert.
         """
+        self.ensure_guest_room(user_id)
         new_id = str(uuid.uuid4())
         self.persistence.save_session(new_id, user_id, [])
         return {"session_id": new_id, "user_id": user_id, "messages": []}
-
-    def list_user_sessions(self, user_id: str) -> list:
-        """Newest-first list of this user's sessions for the sidebar."""
-        return self.persistence.list_sessions(user_id)
 
     # -- Core message flow (streaming) ------------------------------------
 
@@ -128,6 +152,8 @@ class StorageService:
         a reply.
         """
         # 1-2. Load history + append user + persist.
+        if self.persistence.get_user_id(session_id) is None:
+            self.ensure_guest_room(user_id)
         history = self.get_session(session_id)
         messages = history + [{"role": "user", "content": message}]
         self.cache.set_session(session_id, messages[-self.RECENT_MESSAGES:])

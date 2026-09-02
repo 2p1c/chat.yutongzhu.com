@@ -60,3 +60,6 @@ class CacheLayer:
         """Replace the cached messages and reset TTL (used to seed from PostgreSQL)."""
         self._write(session_id, messages)
         return messages
+
+    def delete_session(self, session_id: str) -> None:
+        self.redis.delete(self._key(session_id))

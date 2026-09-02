@@ -7,6 +7,7 @@ Keys (separate from the chat cache window):
 """
 import json
 import secrets
+import uuid
 
 import redis
 
@@ -17,6 +18,7 @@ OTP_SEND_INTERVAL_SECONDS = 60
 OTP_MAX_ATTEMPTS = 5
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 COOKIE_NAME = "chat_session"
+GUEST_ID_PREFIX = "guest:"
 
 _redis = None
 
@@ -78,6 +80,14 @@ def verify_otp(email: str, code: str) -> bool:
         return False
     r.delete(key)
     return True
+
+
+def is_guest_user_id(user_id: str) -> bool:
+    return (user_id or "").startswith(GUEST_ID_PREFIX)
+
+
+def create_guest_session() -> str:
+    return create_login_session(GUEST_ID_PREFIX + str(uuid.uuid4()), "")
 
 
 def create_login_session(user_id: str, email: str) -> str:
