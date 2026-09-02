@@ -131,6 +131,12 @@
       return step + ' · max steps'
         + (evt.content ? '\n' + evt.content : '');
     }
+    if (evt.type === 'interrupt') {
+      var pending = (evt.pending || []).map(function (p) {
+        return (p.name || '?') + (p.summary ? ': ' + p.summary : '');
+      }).join('\n');
+      return step + ' · interrupt' + (pending ? '\n' + pending : '');
+    }
     return step + ' · ' + evt.type;
   }
 
@@ -369,6 +375,8 @@
     var textarea = document.getElementById('chat-textarea');
     var sendBtn = document.getElementById('chat-send');
     var messages = document.getElementById('messages');
+    var composer = document.getElementById('composer-card');
+    var composerWrap = document.querySelector('.chat-composer');
     if (!textarea || !sendBtn) return;
     setChatPlaceholder();
 
@@ -439,6 +447,7 @@
         })
         .then(function (data) {
           if (data) render(data.messages);
+          restoreHitlForSession(sessionId);
         })
         .catch(function (err) {
           console.error('[chat] failed to restore session:', err);
@@ -448,10 +457,215 @@
 
     window.addEventListener(AUTH_EVENT, restoreSession);
 
+    function currentSid() {
+      try { return localStorage.getItem(SESSION_KEY) || sessionId; }
+      catch (e) { return sessionId; }
+    }
+
+    function hitlKey(sid) { return 'hitl:' + sid; }
+    function runWhateverKey(sid) { return 'run_whatever:' + sid; }
+
+    function loadHitl(sid) {
+      try {
+        var raw = localStorage.getItem(hitlKey(sid));
+        if (!raw) return null;
+        var parsed = JSON.parse(raw);
+        if (!parsed || !parsed.run_id || !Array.isArray(parsed.pending)) return null;
+        return parsed;
+      } catch (e) { return null; }
+    }
+
+    function saveHitl(sid, payload) {
+      try { localStorage.setItem(hitlKey(sid), JSON.stringify(payload)); } catch (e) {}
+    }
+
+    function clearHitl(sid) {
+      try { localStorage.removeItem(hitlKey(sid)); } catch (e) {}
+    }
+
+    function isRunWhatever(sid) {
+      try { return localStorage.getItem(runWhateverKey(sid)) === '1'; }
+      catch (e) { return false; }
+    }
+
+    function setRunWhatever(sid, on) {
+      try {
+        if (on) localStorage.setItem(runWhateverKey(sid), '1');
+        else localStorage.removeItem(runWhateverKey(sid));
+      } catch (e) {}
+    }
+
+    function hideComposerCard() {
+      if (!composer) return;
+      composer.hidden = true;
+      composer.textContent = '';
+      composer.className = 'composer-card';
+      if (composerWrap) composerWrap.classList.remove('composer-open');
+    }
+
+    function showComposerCard(kind) {
+      if (!composer) return;
+      composer.hidden = false;
+      composer.className = 'composer-card composer-card-' + kind;
+      composer.textContent = '';
+      if (composerWrap) composerWrap.classList.add('composer-open');
+    }
+
+    function isHitlCardOpen() {
+      return !!(composer && !composer.hidden && composer.classList.contains('composer-card-hitl'));
+    }
+
+    function addComposerOption(label, hint, onClick) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'composer-option';
+      var title = document.createElement('span');
+      title.textContent = label;
+      btn.appendChild(title);
+      if (hint) {
+        var hintEl = document.createElement('span');
+        hintEl.className = 'composer-option-hint';
+        hintEl.textContent = hint;
+        btn.appendChild(hintEl);
+      }
+      btn.addEventListener('click', onClick);
+      composer.appendChild(btn);
+      return btn;
+    }
+
+    var SLASH_COMMANDS = [
+      { cmd: '/run-whatever', hint: '跳过审批，自动执行页面修改' }
+    ];
+
+    function matchingSlash(text) {
+      if (!text || text.charAt(0) !== '/') return [];
+      var q = text.toLowerCase();
+      return SLASH_COMMANDS.filter(function (item) {
+        return item.cmd.indexOf(q) === 0;
+      });
+    }
+
+    function updateSlashMenu() {
+      if (isHitlCardOpen()) return;
+      var matches = matchingSlash(textarea.value);
+      if (!matches.length) {
+        if (composer && composer.classList.contains('composer-card-slash')) hideComposerCard();
+        return;
+      }
+      showComposerCard('slash');
+      matches.forEach(function (item) {
+        addComposerOption(item.cmd, item.hint, function () {
+          textarea.value = item.cmd;
+          hideComposerCard();
+          send();
+        });
+      });
+    }
+
+    function removeHitlCards() {
+      if (isHitlCardOpen()) hideComposerCard();
+    }
+
+    function showHitlCard(payload) {
+      var pending = payload.pending || [];
+      var summaries = [];
+      pending.forEach(function (item) {
+        if (item.summary) summaries.push(item.summary);
+      });
+      showComposerCard('hitl');
+      if (summaries.length) {
+        var summaryEl = document.createElement('div');
+        summaryEl.className = 'composer-summary';
+        summaryEl.textContent = summaries.join('\n');
+        composer.appendChild(summaryEl);
+      }
+      var options = [
+        { label: '同意', hint: '在当前页执行修改', action: 'approve' },
+        { label: '拒绝', hint: '不改页面，把拒绝发给 Agent', action: 'reject' },
+        { label: 'run-whatever', hint: '本次执行，之后也跳过审批', action: 'run-whatever' }
+      ];
+      options.forEach(function (opt) {
+        addComposerOption(opt.label, opt.hint, function () {
+          var buttons = composer.querySelectorAll('button');
+          for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
+          resumeHitl(currentSid(), payload, opt.action);
+        });
+      });
+    }
+
+    function resultsForPending(pending, rejected) {
+      return (pending || []).map(function (item) {
+        if (rejected) {
+          return {
+            tool_call_id: item.tool_call_id,
+            content: '用户拒绝修改页面',
+            outcome: 'rejected'
+          };
+        }
+        var outcome = 'ok';
+        var content;
+        try {
+          var value = eval(item.code); // current page — must not be an isolated iframe
+          content = value === undefined ? 'undefined' : String(value);
+        } catch (err) {
+          outcome = 'error';
+          content = err && err.message ? err.message : String(err);
+        }
+        return { tool_call_id: item.tool_call_id, content: content, outcome: outcome };
+      });
+    }
+
+    function restoreHitlForSession(sid) {
+      removeHitlCards();
+      var saved = loadHitl(sid);
+      if (!saved) {
+        sending = false;
+        updateSend();
+        return;
+      }
+      sending = true;
+      updateSend();
+      showHitlCard(saved);
+    }
+
+    function handleInterrupt(evt) {
+      var sid = currentSid();
+      var payload = { run_id: evt.run_id, pending: evt.pending || [] };
+      saveHitl(sid, payload);
+      sending = true;
+      updateSend();
+      if (isRunWhatever(sid)) {
+        resumeHitl(sid, payload, 'approve');
+        return;
+      }
+      showHitlCard(payload);
+    }
+
+    function resumeHitl(sid, payload, action) {
+      if (action === 'run-whatever') setRunWhatever(sid, true);
+      var results = resultsForPending(payload.pending, action === 'reject');
+      removeHitlCards();
+      clearHitl(sid);
+      sending = true;
+      updateSend();
+      streamAgent('/api/sessions/' + sid + '/resume', {
+        run_id: payload.run_id,
+        results: results
+      });
+    }
+
+    window.addEventListener('chat:session-changed', function (e) {
+      var sid = e && e.detail && e.detail.sessionId;
+      if (!sid) return;
+      sessionId = sid;
+      restoreHitlForSession(sid);
+    });
+
     // Parse an SSE stream from a ReadableStream reader.
-    // onMessage(json), onError(json) receive parsed JSON from `data:` lines.
+    // onMessage(json) receives parsed JSON from `data:` lines.
     // The terminator `[DONE]` resolves; `event: error` rejects.
-    function readSSE(reader, onMessage, onError, onLoop) {
+    // `event: interrupt` calls onInterrupt and resolves — it is not a failure.
+    function readSSE(reader, onMessage, onError, onLoop, onInterrupt) {
       var decoder = new TextDecoder('utf-8');
       var buffer = '';
       function pump() {
@@ -477,6 +691,10 @@
             var json = null;
             try { json = JSON.parse(data); } catch (e) { continue; }
             if (eventName === 'error') throw { sseError: true, payload: json };
+            if (eventName === 'interrupt') {
+              if (onInterrupt) onInterrupt(json);
+              return;
+            }
             if (eventName === 'loop') {
               if (onLoop) onLoop(json);
               continue;
@@ -489,21 +707,7 @@
       return pump();
     }
 
-    function send() {
-      var text = textarea.value.trim();
-      if (!text || sending) return;
-      sending = true;
-      updateSend();
-      addMessage({ role: 'user', content: text });
-      // Clear the input immediately on send so the user can keep typing while
-      // the agent streams its reply. The message text itself is already in the
-      // chat history above.
-      textarea.value = '';
-      textarea.style.height = 'auto';
-
-      // Pre-create the assistant bubble so we can append text tokens into it.
-      // Only the role label is fixed; renderMessageContent rebuilds the think
-      // details + body each time a delta arrives.
+    function streamAgent(path, body) {
       var bubble = document.createElement('div');
       bubble.className = 'chat-message';
       var roleEl = document.createElement('span');
@@ -518,21 +722,19 @@
         bubble.remove();
         console.error('[chat] send failed:', reason);
         addMessage({ role: 'assistant', mock: true, content: '[Send failed — ' + reason + ']' });
+        sending = false;
+        updateSend();
       }
 
-      var sid;
-      try { sid = localStorage.getItem(SESSION_KEY) || sessionId; }
-      catch (e) { sid = sessionId; }
-
-      clearLoopDebug();
-      apiFetch('/api/sessions/' + sid + '/messages', {
+      return apiFetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify(body)
       })
         .then(function (r) {
           if (r.status === 401) throw new Error('not authenticated');
           if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+          var interruptEvt = null;
           return readSSE(
             r.body.getReader(),
             function onMessage(evt) {
@@ -541,42 +743,94 @@
                 renderMessageContent(bubble, assistantText);
                 messages.scrollTop = messages.scrollHeight;
               } else if (evt && evt.done && evt.message) {
-                // Server confirmed the final assistant message — replace the
-                // streamed text with the authoritative copy from the server.
                 assistantText = evt.message.content || '';
                 renderMessageContent(bubble, assistantText);
               }
             },
-            function onError(err) {
-              failAndCleanup((err && err.payload && (err.payload.detail || err.payload.error)) || 'agent error');
-            },
-            appendLoopEvent
-          );
+            null,
+            appendLoopEvent,
+            function onInterrupt(evt) { interruptEvt = evt; }
+          ).then(function () { return interruptEvt; });
         })
-        .catch(function (err) {
-          if (err && err.sseError) {
-            failAndCleanup((err.payload && (err.payload.detail || err.payload.error)) || 'agent error');
-          } else {
-            failAndCleanup(err && err.message ? err.message : 'storage service unreachable');
+        .then(function (interruptEvt) {
+          if (interruptEvt) {
+            if (!assistantText) bubble.remove();
+            handleInterrupt(interruptEvt);
+            return;
           }
-        })
-        .then(function () {
           sending = false;
           updateSend();
           textarea.focus();
-          // Notify the sidebar IIFE so its `message_count` can refresh.
           try { window.dispatchEvent(new CustomEvent('chat:message-sent')); } catch (e) {}
+        })
+        .catch(function (err) {
+          if (err && err.sseError) {
+            var payload = err.payload || {};
+            var reason = payload.detail || payload.error || 'agent error';
+            if (payload.status) reason = String(payload.status) + ' — ' + reason;
+            failAndCleanup(reason);
+          } else {
+            failAndCleanup(err && err.message ? err.message : 'storage service unreachable');
+          }
         });
+    }
+
+    function send() {
+      var text = textarea.value.trim();
+      if (!text || sending) return;
+      var sid = currentSid();
+
+      if (text === '/run-whatever') {
+        var next = !isRunWhatever(sid);
+        setRunWhatever(sid, next);
+        addMessage({ role: 'user', content: text });
+        textarea.value = '';
+        textarea.style.height = 'auto';
+        hideComposerCard();
+        addMessage({
+          role: 'assistant',
+          mock: true,
+          content: next
+            ? '已开启 run-whatever：之后改页面将自动执行，不再弹出审批。再输入一次则关闭。'
+            : '已关闭 run-whatever：之后改页面会再次弹出审批。'
+        });
+        updateSend();
+        return;
+      }
+
+      sending = true;
+      updateSend();
+      addMessage({ role: 'user', content: text });
+      // Clear the input immediately on send so the user can keep typing while
+      // the agent streams its reply. The message text itself is already in the
+      // chat history above.
+      textarea.value = '';
+      textarea.style.height = 'auto';
+      hideComposerCard();
+      clearLoopDebug();
+      streamAgent('/api/sessions/' + sid + '/messages', { message: text });
     }
 
     textarea.addEventListener('input', function () {
       autogrow();
       updateSend();
+      updateSlashMenu();
     });
     textarea.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        if (composer && !composer.hidden && composer.classList.contains('composer-card-slash')) {
+          e.preventDefault();
+          hideComposerCard();
+        }
+        return;
+      }
       // Enter sends; Shift+Enter inserts a newline.
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
+        if (!isHitlCardOpen()) {
+          var matches = matchingSlash(textarea.value);
+          if (matches.length === 1) textarea.value = matches[0].cmd;
+        }
         send();
       }
     });
@@ -659,7 +913,14 @@
       if (!sessionId) { renderMessages([]); return; }
       apiFetch('/api/sessions/' + encodeURIComponent(sessionId))
         .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (data) { renderMessages((data && data.messages) || []); })
+        .then(function (data) {
+          renderMessages((data && data.messages) || []);
+          try {
+            window.dispatchEvent(new CustomEvent('chat:session-changed', {
+              detail: { sessionId: sessionId }
+            }));
+          } catch (e) {}
+        })
         .catch(function () { renderMessages([]); });
     }
 

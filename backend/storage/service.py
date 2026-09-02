@@ -128,23 +128,110 @@ class StorageService:
 
     # -- Core message flow (streaming) ------------------------------------
 
+    def _last_user_text(self, messages: list) -> str:
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                return msg.get("content") or ""
+        return ""
+
+    def _persist_assistant(self, session_id: str, user_id: str, messages: list, assistant_message: dict) -> None:
+        messages = messages + [assistant_message]
+        self.cache.set_session(session_id, messages[-self.RECENT_MESSAGES:])
+        self.persistence.save_session(session_id, user_id, messages)
+        user_text = self._last_user_text(messages)
+        try:
+            embedding = generate_embedding(user_text)
+            if embedding:
+                self.semantic.store_memory(session_id, user_text, embedding)
+        except Exception as exc:
+            # Semantic layer failure must not block the main message flow.
+            print(f"[storage] semantic memory skipped for session {session_id}: {exc}")
+
+    def _relay_agent_events(self, session_id: str, user_id: str, events: Iterator[dict]) -> Iterator[dict]:
+        """Forward Agent SSE events. Persist assistant only on done.
+
+        interrupt is a successful pause: yield it and return, do not treat as
+        agent_incomplete. pending.code is never stored in session history.
+        """
+        assistant_message = None
+        try:
+            for event in events:
+                if event["type"] == "delta":
+                    yield {"type": "delta", "delta": event["delta"]}
+                elif event["type"] == "loop":
+                    yield {"type": "loop", "event": event["event"]}
+                elif event["type"] == "interrupt":
+                    yield {
+                        "type": "interrupt",
+                        "run_id": event.get("run_id"),
+                        "pending": event.get("pending") or [],
+                    }
+                    return
+                elif event["type"] == "done":
+                    assistant_message = event["message"]
+                    break
+                elif event["type"] == "error":
+                    yield {
+                        "type": "error",
+                        "error": event.get("error", "agent_error"),
+                        "detail": event.get("detail", ""),
+                    }
+                    return
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            detail = ""
+            if exc.response is not None:
+                try:
+                    detail = exc.response.text
+                except Exception:
+                    detail = str(exc)
+            yield {
+                "type": "error",
+                "error": "agent_http_error",
+                "detail": detail or str(exc),
+                "status": status,
+            }
+            return
+        except requests.RequestException as exc:
+            yield {"type": "error", "error": "agent_unreachable", "detail": str(exc)}
+            return
+        except Exception as exc:  # unexpected — surface instead of faking a reply
+            yield {"type": "error", "error": "agent_error", "detail": str(exc)}
+            return
+
+        if not assistant_message:
+            yield {"type": "error", "error": "agent_incomplete",
+                   "detail": "stream ended without done event"}
+            return
+
+        history = self.get_session(session_id)
+        self._persist_assistant(session_id, user_id, history, assistant_message)
+        yield {
+            "type": "done",
+            "message": assistant_message,
+            "session_id": session_id,
+            "user_id": user_id,
+        }
+
     def stream_user_message(self, session_id: str, user_id: str, message: str) -> Iterator[dict]:
         """Run a user message through the full pipeline, streaming Agent output.
 
         Yields dict events consumed by the API layer (translated to SSE):
 
           - {"type": "delta", "delta": "..."}    0..N  — Agent incremental text
+          - {"type": "interrupt", "run_id", "pending"}  0 or 1 — HITL pause
           - {"type": "done",  "message": {...},
-             "session_id": ..., "user_id": ...}  exactly 1
+             "session_id": ..., "user_id": ...}  1 if the run finished
           - {"type": "error", "error": "...",
              "detail": "..."}                   0 or 1 — Agent failure
 
-        Storage flow (mirrors the legacy spec):
+        Storage flow:
           1. Load history (Redis cache → PG fallback), append user message.
           2. Persist user message to Redis + PG.
           3. Stream from Agent (POST /complete/stream).
-          4. On done event: append assistant, persist, semantic memory.
-          5. On Agent failure: assistant is NOT persisted. The user message
+          4. On done: append assistant, persist, semantic memory.
+          5. On interrupt: yield it, do not persist an assistant.
+          6. On Agent failure: assistant is NOT persisted. The user message
              stays in PG — that is correct (user did send it).
 
         No mock fallback: Agent failures surface as `error` events so the
@@ -159,55 +246,17 @@ class StorageService:
         self.cache.set_session(session_id, messages[-self.RECENT_MESSAGES:])
         self.persistence.save_session(session_id, user_id, messages)
 
-        # 3. Stream from Agent.
-        assistant_message = None
-        try:
-            for event in self.agent.stream(
-                session_id=session_id, user_id=user_id, messages=messages,
-            ):
-                if event["type"] == "delta":
-                    yield {"type": "delta", "delta": event["delta"]}
-                elif event["type"] == "loop":
-                    yield {"type": "loop", "event": event["event"]}
-                elif event["type"] == "done":
-                    assistant_message = event["message"]
-                    break
-                elif event["type"] == "error":
-                    yield {
-                        "type": "error",
-                        "error": event.get("error", "agent_error"),
-                        "detail": event.get("detail", ""),
-                    }
-                    return
-        except requests.RequestException as exc:
-            yield {"type": "error", "error": "agent_unreachable", "detail": str(exc)}
-            return
-        except Exception as exc:  # unexpected — surface instead of faking a reply
-            yield {"type": "error", "error": "agent_error", "detail": str(exc)}
-            return
+        yield from self._relay_agent_events(
+            session_id,
+            user_id,
+            self.agent.stream(session_id=session_id, user_id=user_id, messages=messages),
+        )
 
-        if not assistant_message:
-            yield {"type": "error", "error": "agent_incomplete",
-                   "detail": "stream ended without done event"}
-            return
-
-        # 4. Persist assistant + semantic memory (best-effort).
-        messages = messages + [assistant_message]
-        self.cache.set_session(session_id, messages[-self.RECENT_MESSAGES:])
-        self.persistence.save_session(session_id, user_id, messages)
-        try:
-            embedding = generate_embedding(message)
-            if embedding:
-                self.semantic.store_memory(session_id, message, embedding)
-        except Exception as exc:
-            # Semantic layer failure must not block the main message flow.
-            print(f"[storage] semantic memory skipped for session {session_id}: {exc}")
-
-        # 5. Final done event.
-        yield {
-            "type": "done",
-            "message": assistant_message,
-            "session_id": session_id,
-            "user_id": user_id,
-        }
+    def stream_resume(self, session_id: str, user_id: str, run_id: str, results: list) -> Iterator[dict]:
+        """Continue a HITL run after the browser eval'd (or rejected) pending JS."""
+        yield from self._relay_agent_events(
+            session_id,
+            user_id,
+            self.agent.resume_stream(run_id, results),
+        )
 
