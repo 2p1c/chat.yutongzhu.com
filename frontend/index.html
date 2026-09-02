@@ -66,6 +66,9 @@
       <h1><a href="/" style="color: inherit; text-decoration: none;">{ Yutong Zhu }</a></h1>
       <span class="subtitle">developer • student • robot</span>
       <div class="header-actions">
+        <button id="btn-login" class="theme-toggle header-login" type="button" hidden aria-label="Log in" title="Log in">
+          <svg class="theme-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
         <button id="btn-logout" class="theme-toggle header-logout" type="button" hidden aria-label="Log out" title="Log out">
           <svg class="theme-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg>
         </button>
@@ -95,6 +98,9 @@
 
   <div id="auth-gate" class="auth-gate" hidden>
     <form id="auth-form" class="auth-card">
+      <button id="auth-close" class="auth-close" type="button" aria-label="Close" title="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
       <h2 class="lang-en">Sign in</h2>
       <h2 class="lang-zh">登录</h2>
       <p class="auth-lead lang-en">Enter your email and we’ll send a 6-digit code.</p>

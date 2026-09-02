@@ -1,9 +1,10 @@
 """FastAPI auth helpers: current user + cookie flags."""
-from fastapi import Cookie, HTTPException, Request, Response
+from fastapi import Cookie, Request, Response
 
 from .store import (
     COOKIE_NAME,
     SESSION_TTL_SECONDS,
+    create_guest_session,
     delete_login_session,
     load_login_session,
 )
@@ -38,10 +39,15 @@ def clear_session_cookie(request: Request, response: Response, token: str | None
 
 def get_current_user(
     request: Request,
+    response: Response,
     chat_session: str | None = Cookie(default=None, alias=COOKIE_NAME),
 ) -> dict:
     data = load_login_session(chat_session or "")
     if not data:
-        raise HTTPException(status_code=401, detail="not authenticated")
+        token = create_guest_session()
+        set_session_cookie(request, response, token)
+        data = load_login_session(token)
+        request.state.session_token = token
+        return data
     request.state.session_token = chat_session
     return data

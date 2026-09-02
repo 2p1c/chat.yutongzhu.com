@@ -16,8 +16,11 @@ from .mail import send_otp_email
 from .store import (
     COOKIE_NAME,
     can_send_otp,
+    create_guest_session,
     create_login_session,
     get_redis,
+    is_guest_user_id,
+    load_login_session,
     new_otp,
     normalize_email,
     store_otp,
@@ -81,6 +84,9 @@ def verify_code(body: VerifyIn, request: Request, response: Response):
         raise HTTPException(status_code=400, detail="invalid code")
     if not verify_otp(email, body.code):
         raise HTTPException(status_code=401, detail="invalid or expired code")
+    current = load_login_session(request.cookies.get(COOKIE_NAME) or "")
+    if current and is_guest_user_id(current["user_id"]):
+        _storage(request).delete_user_sessions(current["user_id"])
     user = _storage(request).get_or_create_user(email)
     token = create_login_session(user["id"], user["email"])
     set_session_cookie(request, response, token)
@@ -91,9 +97,16 @@ def verify_code(body: VerifyIn, request: Request, response: Response):
 def logout(request: Request, response: Response):
     token = request.cookies.get(COOKIE_NAME)
     clear_session_cookie(request, response, token)
+    guest_token = create_guest_session()
+    set_session_cookie(request, response, guest_token)
     return {"ok": True}
 
 
 @router.get("/me")
 def me(user: dict = Depends(get_current_user)):
-    return {"id": user["user_id"], "email": user["email"]}
+    uid = user["user_id"]
+    return {
+        "id": uid,
+        "email": user.get("email") or "",
+        "guest": is_guest_user_id(uid),
+    }

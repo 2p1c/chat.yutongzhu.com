@@ -91,6 +91,55 @@ class PersistenceLayer:
             })
         return out
 
+    def count_sessions(self, user_id: str) -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS n FROM sessions WHERE user_id = %s",
+                    (user_id,),
+                )
+                row = cur.fetchone()
+        return int(row["n"]) if row else 0
+
+    def delete_session(self, session_id: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
+
+    def delete_oldest_sessions(self, user_id: str, limit: int) -> list:
+        """Delete the oldest sessions for this user. Returns deleted ids."""
+        if limit <= 0:
+            return []
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH doomed AS (
+                        SELECT id FROM sessions
+                        WHERE user_id = %s
+                        ORDER BY created_at ASC
+                        LIMIT %s
+                    )
+                    DELETE FROM sessions
+                    WHERE id IN (SELECT id FROM doomed)
+                    RETURNING id
+                    """,
+                    (user_id, limit),
+                )
+                rows = cur.fetchall()
+        return [str(row["id"]) for row in rows]
+
+    def delete_sessions_for_user(self, user_id: str) -> list:
+        """Delete every session owned by this user. Returns deleted ids."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM sessions WHERE user_id = %s RETURNING id",
+                    (user_id,),
+                )
+                rows = cur.fetchall()
+        return [str(row["id"]) for row in rows]
+
     def get_or_create_user(self, email: str) -> dict:
         """Insert a users row for this email, or return the existing one."""
         with self._connect() as conn:

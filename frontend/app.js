@@ -823,7 +823,7 @@
     } catch (e) {}
   })();
 
-  /* ── Email OTP gate ── */
+  /* ── Email OTP (optional overlay; guests can chat without signing in) ── */
   (function () {
     var gate = document.getElementById('auth-gate');
     var form = document.getElementById('auth-form');
@@ -832,7 +832,9 @@
     var codeInput = document.getElementById('auth-code');
     var errorEl = document.getElementById('auth-error');
     var submitBtn = document.getElementById('auth-submit');
+    var loginBtn = document.getElementById('btn-login');
     var logoutBtn = document.getElementById('btn-logout');
+    var closeBtn = document.getElementById('auth-close');
     if (!gate || !form || !emailInput || !submitBtn) return;
 
     var awaitingCode = false;
@@ -858,22 +860,39 @@
       if (on && codeInput) codeInput.focus();
     }
 
+    function setAuthButtons(loggedIn) {
+      if (loginBtn) loginBtn.hidden = loggedIn;
+      if (logoutBtn) logoutBtn.hidden = !loggedIn;
+    }
+
+    function hideOverlay() {
+      gate.hidden = true;
+    }
+
     function showGate() {
       gate.hidden = false;
-      if (logoutBtn) logoutBtn.hidden = true;
       setVerifyMode(false);
       setAuthError('');
       if (emailInput) emailInput.focus();
     }
 
-    function hideGate() {
-      gate.hidden = true;
-      if (logoutBtn) logoutBtn.hidden = false;
+    function enterGuestMode() {
+      hideOverlay();
+      setAuthButtons(false);
+      try { window.dispatchEvent(new CustomEvent(AUTH_EVENT)); } catch (e) {}
     }
 
     function onLoggedIn() {
-      hideGate();
+      hideOverlay();
+      setAuthButtons(true);
       try { window.dispatchEvent(new CustomEvent(AUTH_EVENT)); } catch (e) {}
+    }
+
+    function clearChatUi() {
+      var messagesEl = document.getElementById('messages');
+      if (messagesEl) messagesEl.textContent = '';
+      var list = document.getElementById('sidebar-list');
+      if (list) list.innerHTML = '';
     }
 
     form.addEventListener('submit', function (e) {
@@ -904,6 +923,7 @@
             return;
           }
           if (awaitingCode) {
+            clearChatUi();
             onLoggedIn();
             return;
           }
@@ -915,25 +935,33 @@
         .then(function () { submitBtn.disabled = false; });
     });
 
+    if (loginBtn) {
+      loginBtn.addEventListener('click', showGate);
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener('click', hideOverlay);
+    }
+    gate.addEventListener('click', function (e) {
+      if (e.target === gate) hideOverlay();
+    });
+
     if (logoutBtn) {
       logoutBtn.addEventListener('click', function () {
         apiFetch('/api/auth/logout', { method: 'POST' })
           .catch(function () {})
           .then(function () {
-            showGate();
-            var messagesEl = document.getElementById('messages');
-            if (messagesEl) messagesEl.textContent = '';
-            var list = document.getElementById('sidebar-list');
-            if (list) list.innerHTML = '';
+            clearChatUi();
+            enterGuestMode();
           });
       });
     }
 
     apiFetch('/api/me')
-      .then(function (r) {
-        if (r.ok) onLoggedIn();
-        else showGate();
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data && data.guest === false) onLoggedIn();
+        else enterGuestMode();
       })
-      .catch(function () { showGate(); });
+      .catch(function () { enterGuestMode(); });
   })();
 })();
