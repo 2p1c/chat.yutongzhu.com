@@ -74,6 +74,18 @@ body {
   pointer-events: none; /* animation must never block clicks */
 }
 
+/* Touch devices: promote layer + fallback tint if WebGL init is delayed. */
+@media (pointer: coarse) {
+  #vanta-bg {
+    inset: 0;
+    width: auto;
+    height: auto;
+    background-color: var(--background-color);
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+  }
+}
+
 #vanta-bg canvas {
   opacity: 0.99;
   /* Fade the fog canvas in so it doesn't "pop" after the late JS load. */

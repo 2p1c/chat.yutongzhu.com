@@ -216,6 +216,14 @@
     return THEMES[t] ? t : 'dark';
   }
 
+  function vantaHex(color) {
+    return '#' + ('000000' + color.toString(16)).slice(-6);
+  }
+
+  function applyVantaFallback(el) {
+    el.style.backgroundColor = vantaHex(THEMES[currentTheme()].baseColor);
+  }
+
   // Builds the fog effect for the active theme. Destroying + rebuilding on theme
   // switch is simple and reliable (switches are rare, so the cost is negligible).
   function initVanta() {
@@ -223,7 +231,9 @@
     // disabled, bad driver, etc.) it must never break the chat — so isolate it.
     try {
       var el = document.getElementById('vanta-bg');
-      if (!el || !window.VANTA || !window.VANTA.FOG) return;
+      if (!el) return;
+      applyVantaFallback(el);
+      if (!window.VANTA || !window.VANTA.FOG) return;
       if (vanta) { vanta.destroy(); vanta = null; }
       var palette = THEMES[currentTheme()];
       vanta = window.VANTA.FOG({
@@ -237,6 +247,7 @@
         midtoneColor: palette.midtoneColor,
         lowlightColor: palette.lowlightColor,
         baseColor: palette.baseColor,
+        backgroundColor: palette.baseColor,
         blurFactor: palette.blurFactor,
         speed: palette.speed,
         zoom: palette.zoom
@@ -246,10 +257,33 @@
     }
   }
 
+  function bootVanta() {
+    if (prefersReducedMotion) return;
+    initVanta();
+  }
+
   // Respect the system "reduce motion" preference: no animation, plain background.
   var prefersReducedMotion = window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var isCoarsePointer = window.matchMedia &&
+    window.matchMedia('(pointer: coarse)').matches;
+
   if (!prefersReducedMotion) initVanta();
+
+  // Mobile Safari often finishes layout after first paint; retry without touching desktop.
+  if (isCoarsePointer) {
+    window.addEventListener('load', bootVanta);
+    window.addEventListener('pageshow', bootVanta);
+    var vantaResizeTimer;
+    window.addEventListener('resize', function () {
+      clearTimeout(vantaResizeTimer);
+      vantaResizeTimer = setTimeout(function () {
+        if (prefersReducedMotion) return;
+        if (vanta && typeof vanta.resize === 'function') vanta.resize();
+        else bootVanta();
+      }, 250);
+    });
+  }
 
   /* ── Chat input placeholder follows the active language ── */
   var CHAT_PLACEHOLDERS = { en: 'Ask me anything…', zh: '问我任何问题…' };
