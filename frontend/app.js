@@ -183,12 +183,28 @@
     updateLoopEmptyHint();
   }
 
-  /* ── Animated Vanta cells background ── */
+  /* ── Animated Vanta fog background (ink-wash palettes) ── */
 
-  // Per-theme cell palettes. color1/color2 = cell fill tones, backgroundColor = canvas backdrop.
+  // Light: 宣纸 + 焦/浓/淡墨. Dark: 墨底 + 飞白高光.
   var THEMES = {
-    light: { color1: 0x8fb4ec, color2: 0xc9d9f2, backgroundColor: 0xf8f5f0 },
-    dark:  { color1: 0x6366f1, color2: 0x8b5cf6, backgroundColor: 0x0e0e11 }
+    light: {
+      highlightColor: 0xcfc9bc,
+      midtoneColor: 0x5c5852,
+      lowlightColor: 0x1c1b19,
+      baseColor: 0xe8e4da,
+      blurFactor: 0.62,
+      speed: 0.5,
+      zoom: 1.15
+    },
+    dark: {
+      highlightColor: 0x8a8680,
+      midtoneColor: 0x3d3a36,
+      lowlightColor: 0x080807,
+      baseColor: 0x141311,
+      blurFactor: 0.55,
+      speed: 0.45,
+      zoom: 1.1
+    }
   };
 
   var vanta = null;
@@ -200,27 +216,30 @@
     return THEMES[t] ? t : 'dark';
   }
 
-  // Builds the cells effect for the active theme. Destroying + rebuilding on theme
+  // Builds the fog effect for the active theme. Destroying + rebuilding on theme
   // switch is simple and reliable (switches are rare, so the cost is negligible).
   function initVanta() {
     // Vanta is purely decorative. If WebGL/three.js fails (hardware acceleration
     // disabled, bad driver, etc.) it must never break the chat — so isolate it.
     try {
       var el = document.getElementById('vanta-bg');
-      if (!el || !window.VANTA || !window.VANTA.CELLS) return;
+      if (!el || !window.VANTA || !window.VANTA.FOG) return;
       if (vanta) { vanta.destroy(); vanta = null; }
-      vanta = window.VANTA.CELLS({
+      var palette = THEMES[currentTheme()];
+      vanta = window.VANTA.FOG({
         el: el,
         mouseControls: true,
         touchControls: true,
         gyroControls: false,
         minHeight: 200,
         minWidth: 200,
-        scale: 1.0,
-        scaleMobile: 0.8,
-        color1: THEMES[currentTheme()].color1,
-        color2: THEMES[currentTheme()].color2,
-        backgroundColor: THEMES[currentTheme()].backgroundColor
+        highlightColor: palette.highlightColor,
+        midtoneColor: palette.midtoneColor,
+        lowlightColor: palette.lowlightColor,
+        baseColor: palette.baseColor,
+        blurFactor: palette.blurFactor,
+        speed: palette.speed,
+        zoom: palette.zoom
       });
     } catch (err) {
       console.warn('[vanta] init failed (decorative only):', err);
