@@ -285,15 +285,25 @@
     });
   }
 
-  /* ── Chat input placeholder follows the active language ── */
-  var CHAT_PLACEHOLDERS = { en: 'Ask me anything…', zh: '问我任何问题…' };
+  /* ── Chat input placeholder: one random line per page load ── */
+  var CHAT_PLACEHOLDER_OPTIONS = [
+    'Ask anything...',
+    'Understand yourself...',
+    'Observation is inherently theory-laden...',
+    'Is all battle of the mind...',
+    'Stop judge yourself...',
+    'Appreciate every moment...'
+  ];
+  var chatPlaceholderText = CHAT_PLACEHOLDER_OPTIONS[
+    Math.floor(Math.random() * CHAT_PLACEHOLDER_OPTIONS.length)
+  ];
 
   function setChatPlaceholder() {
     var t = document.getElementById('chat-textarea');
     if (!t) return;
-    var lang = document.documentElement.getAttribute('data-lang') || 'zh';
-    t.placeholder = CHAT_PLACEHOLDERS[lang] || CHAT_PLACEHOLDERS.en;
+    t.placeholder = chatPlaceholderText;
   }
+  setChatPlaceholder();
 
   /* ── Theme toggle (mirrors src/lib/theme.ts) ── */
   (function () {
