@@ -37,9 +37,10 @@ services:
   rag:
     image: ghcr.io/2p1c/rag-store-server:latest
     container_name: chat-rag
+    mem_limit: 2g
     environment:
       HOST: 0.0.0.0
-      INDEX_DIR: /data/indexes/msmarco-minilm
+      INDEX_DIR: /data/indexes/msmarco-minilm-100k
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
     volumes:
       - ./data/rag-indexes:/data/indexes:ro
@@ -56,8 +57,6 @@ services:
       MODEL: ${MODEL:?set MODEL in .env}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:?set OPENAI_BASE_URL in .env}
       RAG_SEARCH_URL: http://rag:8080/search
-    depends_on:
-      - rag
 
   # FastAPI API only (no static files). Not published on the host; `web` proxies /api.
   backend:
