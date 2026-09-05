@@ -597,6 +597,7 @@
     }
 
     var SLASH_COMMANDS = [
+      { cmd: '/rag', hint: '检索知识库，空格后写检索词', insertOnly: true },
       { cmd: '/run-whatever', hint: '跳过审批，自动执行页面修改' }
     ];
 
@@ -618,6 +619,14 @@
       showComposerCard('slash');
       matches.forEach(function (item) {
         addComposerOption(item.cmd, item.hint, function () {
+          if (item.insertOnly) {
+            textarea.value = item.cmd + ' ';
+            hideComposerCard();
+            autogrow();
+            updateSend();
+            textarea.focus();
+            return;
+          }
           textarea.value = item.cmd;
           hideComposerCard();
           send();
@@ -892,7 +901,16 @@
         e.preventDefault();
         if (!isHitlCardOpen()) {
           var matches = matchingSlash(textarea.value);
-          if (matches.length === 1) textarea.value = matches[0].cmd;
+          if (matches.length === 1) {
+            if (matches[0].insertOnly) {
+              textarea.value = matches[0].cmd + ' ';
+              hideComposerCard();
+              autogrow();
+              updateSend();
+              return;
+            }
+            textarea.value = matches[0].cmd;
+          }
         }
         send();
       }
