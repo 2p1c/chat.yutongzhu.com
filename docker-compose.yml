@@ -32,6 +32,20 @@ services:
       timeout: 3s
       retries: 5
 
+  # RAG search (rag-store-server). Built and pushed to GHCR by that repo's CI;
+  # this file only consumes the image. Index is bind-mounted, not baked in.
+  rag:
+    image: ghcr.io/2p1c/rag-store-server:latest
+    container_name: chat-rag
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      HOST: 0.0.0.0
+      INDEX_DIR: /data/indexes/msmarco-minilm
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
+    volumes:
+      - ./data/rag-indexes:/data/indexes:ro
+
   # TypeScript Agent (mmagent). Built and pushed to GHCR by the Agent repo's
   # CI (my-minimal-agent); this file only consumes the image.
   agent:
@@ -43,6 +57,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env or shell}
       MODEL: ${MODEL:?set MODEL in .env}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:?set OPENAI_BASE_URL in .env}
+      RAG_SEARCH_URL: http://rag:8080/search
+    depends_on:
+      - rag
 
   # FastAPI API only (no static files). Not published on the host; `web` proxies /api.
   backend:
