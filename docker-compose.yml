@@ -41,6 +41,9 @@ services:
     environment:
       HOST: 0.0.0.0
       INDEX_DIR: /data/indexes/msmarco-minilm-100k
+      HF_HOME: /opt/hf-cache
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
     volumes:
       - ./data/rag-indexes:/data/indexes:ro
