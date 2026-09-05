@@ -367,11 +367,168 @@
     try { localStorage.setItem(THINK_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
   }
 
+  function canParseMarkdown() {
+    var md = typeof marked !== 'undefined' ? marked : null;
+    var purify = typeof DOMPurify !== 'undefined' ? DOMPurify : null;
+    return !!(md && typeof md.parse === 'function'
+      && purify && typeof purify.sanitize === 'function');
+  }
+
+  function isLineStart(text, pos) {
+    return pos === 0 || text.charAt(pos - 1) === '\n';
+  }
+
+  // CommonMark fence: up to 3 spaces, then 3+ backticks or tildes, at line start.
+  function fenceLenAt(text, pos) {
+    if (!isLineStart(text, pos)) return 0;
+    var k = pos;
+    var n = text.length;
+    while (k < n && k - pos < 3 && text.charAt(k) === ' ') k++;
+    var ch = text.charAt(k);
+    if (ch !== '`' && ch !== '~') return 0;
+    var run = 0;
+    while (k + run < n && text.charAt(k + run) === ch) run++;
+    return run >= 3 ? (k - pos + run) : 0;
+  }
+
+  function skipLine(text, pos) {
+    var n = text.length;
+    while (pos < n && text.charAt(pos) !== '\n') pos++;
+    if (pos < n) pos++;
+    return pos;
+  }
+
+  // Skip a complete fenced block starting at `pos`. -1 if the closer is missing.
+  function skipClosedFence(text, pos) {
+    pos = skipLine(text, pos);
+    var n = text.length;
+    while (pos < n) {
+      if (fenceLenAt(text, pos)) return skipLine(text, pos);
+      pos = skipLine(text, pos);
+    }
+    return -1;
+  }
+
+  function indexOfBeforeFence(text, token, from) {
+    var i = from;
+    var n = text.length;
+    var tlen = token.length;
+    while (i < n) {
+      if (fenceLenAt(text, i)) return -1;
+      if (text.substr(i, tlen) === token) return i;
+      i++;
+    }
+    return -1;
+  }
+
+  function findBacktickClose(text, from, run) {
+    var i = from;
+    var n = text.length;
+    while (i < n) {
+      if (fenceLenAt(text, i)) return -1;
+      if (text.charAt(i) === '`') {
+        var r = 1;
+        while (i + r < n && text.charAt(i + r) === '`') r++;
+        if (r === run) return i;
+        i += r;
+        continue;
+      }
+      i++;
+    }
+    return -1;
+  }
+
+  // Index of the first still-open markdown opener, or -1 if the text is closed.
+  // Covers fences, inline code, links/images, **, __, and ~~ — the constructs
+  // that make marked swallow the rest of the message while they are open.
+  function incompleteMarkdownSplit(text) {
+    var i = 0;
+    var n = text.length;
+    while (i < n) {
+      var fl = fenceLenAt(text, i);
+      if (fl) {
+        var end = skipClosedFence(text, i);
+        if (end < 0) return i;
+        i = end;
+        continue;
+      }
+      var ch = text.charAt(i);
+      if (ch === '`') {
+        var run = 1;
+        while (i + run < n && text.charAt(i + run) === '`') run++;
+        var tickClose = findBacktickClose(text, i + run, run);
+        if (tickClose < 0) return i;
+        i = tickClose + run;
+        continue;
+      }
+      if (ch === '[' || (ch === '!' && text.charAt(i + 1) === '[')) {
+        var opener = i;
+        var bracket = ch === '!' ? i + 1 : i;
+        var rb = indexOfBeforeFence(text, ']', bracket + 1);
+        if (rb < 0) return opener;
+        if (text.charAt(rb + 1) === '(') {
+          var rp = indexOfBeforeFence(text, ')', rb + 2);
+          if (rp < 0) return opener;
+          i = rp + 1;
+          continue;
+        }
+        i = rb + 1;
+        continue;
+      }
+      if ((ch === '*' && text.charAt(i + 1) === '*')
+        || (ch === '_' && text.charAt(i + 1) === '_')
+        || (ch === '~' && text.charAt(i + 1) === '~')) {
+        var close = indexOfBeforeFence(text, ch + ch, i + 2);
+        if (close < 0) return i;
+        i = close + 2;
+        continue;
+      }
+      i++;
+    }
+    return -1;
+  }
+
+  function fillMarkdownBody(el, raw, finalize) {
+    el.setAttribute('data-raw', raw);
+    if (!canParseMarkdown()) {
+      el.textContent = raw;
+      return;
+    }
+    var closed = raw;
+    var rest = '';
+    if (!finalize) {
+      var split = incompleteMarkdownSplit(raw);
+      if (split >= 0) {
+        closed = raw.slice(0, split);
+        rest = raw.slice(split);
+      }
+    }
+    if (closed) {
+      var wrap = document.createElement('div');
+      wrap.className = 'chat-md';
+      try {
+        wrap.innerHTML = DOMPurify.sanitize(marked.parse(closed, { gfm: true, breaks: true }));
+      } catch (e) {
+        wrap.textContent = closed;
+      }
+      el.appendChild(wrap);
+    }
+    if (rest) {
+      var tail = document.createElement('span');
+      tail.className = 'chat-md-pending';
+      tail.textContent = rest;
+      el.appendChild(tail);
+    }
+  }
+
   // Replaces the content of `parent` (a .chat-message) with the think details
   // + chat-body for the given text. Preserves any existing first child (the
   // role label) so this works both for one-shot rendering and for incremental
   // re-renders during a streaming response.
-  function renderMessageContent(parent, content) {
+  // `finalize` (history load / stream done): parse the full body even if a
+  // trailing construct is still open. During deltas, unclosed syntax stays
+  // plain text until it closes.
+  function renderMessageContent(parent, content, finalize) {
     while (parent.childNodes.length > 1) {
       parent.removeChild(parent.lastChild);
     }
@@ -406,7 +563,13 @@
     }
     var bodyDiv = document.createElement('div');
     bodyDiv.className = 'chat-body';
-    bodyDiv.textContent = parts.pre + parts.body;
+    var rawBody = parts.pre + parts.body;
+    if (parent.classList.contains('chat-message-user')) {
+      bodyDiv.setAttribute('data-raw', rawBody);
+      bodyDiv.textContent = rawBody;
+    } else {
+      fillMarkdownBody(bodyDiv, rawBody, !!finalize);
+    }
     parent.appendChild(bodyDiv);
     var copyBtn = document.createElement('button');
     copyBtn.type = 'button';
@@ -426,7 +589,7 @@
     roleEl.className = 'chat-role';
     roleEl.textContent = msg.role === 'user' ? 'You' : (msg.mock ? 'Agent (Mock)' : 'Agent');
     div.appendChild(roleEl);
-    renderMessageContent(div, msg.content);
+    renderMessageContent(div, msg.content, true);
     return div;
   }
 
@@ -789,6 +952,7 @@
       messages.appendChild(bubble);
       messages.scrollTop = messages.scrollHeight;
       var assistantText = '';
+      var streamFinalized = false;
 
       function failAndCleanup(reason) {
         bubble.remove();
@@ -812,11 +976,12 @@
             function onMessage(evt) {
               if (evt && typeof evt.delta === 'string') {
                 assistantText += evt.delta;
-                renderMessageContent(bubble, assistantText);
+                renderMessageContent(bubble, assistantText, false);
                 messages.scrollTop = messages.scrollHeight;
               } else if (evt && evt.done && evt.message) {
                 assistantText = evt.message.content || '';
-                renderMessageContent(bubble, assistantText);
+                renderMessageContent(bubble, assistantText, true);
+                streamFinalized = true;
               }
             },
             null,
@@ -829,6 +994,9 @@
             if (!assistantText) bubble.remove();
             handleInterrupt(interruptEvt);
             return;
+          }
+          if (assistantText && !streamFinalized) {
+            renderMessageContent(bubble, assistantText, true);
           }
           sending = false;
           updateSend();
@@ -1138,7 +1306,7 @@
       e.preventDefault();
       var msg = btn.closest('.chat-message');
       var body = msg && msg.querySelector('.chat-body');
-      var text = body ? (body.textContent || '') : '';
+      var text = (body && (body.getAttribute('data-raw') || body.textContent)) || '';
       copyText(text).then(function () { flashCopied(btn); });
     });
   })();
