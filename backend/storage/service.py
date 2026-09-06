@@ -31,6 +31,7 @@ class StorageService:
         self.persistence = persistence or PersistenceLayer()
         self.semantic = semantic or SemanticLayer()
         self.agent = agent or AgentRuntime()
+        self._generating = set()
 
     # -- Cache ------------------------------------------------------------
 
@@ -78,7 +79,8 @@ class StorageService:
         owner = self.persistence.get_user_id(session_id)
         if owner is not None and owner != user_id:
             return None
-        messages = self.get_session(session_id) if owner is not None else []
+        history = self.persistence.get_history(session_id) if owner is not None else None
+        messages = self._ensure_message_ids(session_id, history) if history is not None else []
         return {"session_id": session_id, "user_id": user_id, "messages": messages}
 
     def session_owned_by(self, session_id: str, user_id: str) -> bool:
@@ -126,6 +128,83 @@ class StorageService:
         self.persistence.save_session(new_id, user_id, [])
         return {"session_id": new_id, "user_id": user_id, "messages": []}
 
+    def try_begin_generation(self, session_id: str) -> bool:
+        if session_id in self._generating:
+            return False
+        self._generating.add(session_id)
+        return True
+
+    def end_generation(self, session_id: str) -> None:
+        self._generating.discard(session_id)
+
+    def _message_id(self, raw: str | None) -> str:
+        if raw:
+            try:
+                return str(uuid.UUID(raw))
+            except ValueError:
+                pass
+        return str(uuid.uuid4())
+
+    def _ensure_message_ids(self, session_id: str, messages: list) -> list:
+        changed = False
+        out = []
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("id"):
+                out.append(msg)
+                continue
+            if isinstance(msg, dict):
+                item = dict(msg)
+                item["id"] = str(uuid.uuid4())
+                out.append(item)
+                changed = True
+            else:
+                out.append(msg)
+        if changed:
+            uid = self.persistence.get_user_id(session_id)
+            if uid is not None:
+                self.cache.set_session(session_id, out[-self.RECENT_MESSAGES:])
+                self.persistence.save_session(session_id, uid, out)
+        return out
+
+    def _for_agent(self, messages: list) -> list:
+        out = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            out.append({k: v for k, v in msg.items() if k != "id"})
+        return out
+
+    def _write_messages(self, session_id: str, user_id: str, messages: list) -> None:
+        self.cache.set_session(session_id, messages[-self.RECENT_MESSAGES:])
+        self.persistence.save_session(session_id, user_id, messages)
+
+    def truncate_user_message(self, session_id: str, user_id: str, message_id: str, text: str) -> list:
+        """Replace a user message, drop everything after it, persist. Raises ValueError with .status_code."""
+        history = self.persistence.get_history(session_id)
+        if history is None:
+            err = ValueError("session not found")
+            err.status_code = 404
+            raise err
+        history = self._ensure_message_ids(session_id, history)
+        idx = None
+        for i, msg in enumerate(history):
+            if isinstance(msg, dict) and msg.get("id") == message_id:
+                idx = i
+                break
+        if idx is None:
+            err = ValueError("message not found")
+            err.status_code = 404
+            raise err
+        if history[idx].get("role") != "user":
+            err = ValueError("only user messages can be edited")
+            err.status_code = 400
+            raise err
+        edited = dict(history[idx])
+        edited["content"] = text
+        messages = history[:idx] + [edited]
+        self._write_messages(session_id, user_id, messages)
+        return messages
+
     # -- Core message flow (streaming) ------------------------------------
 
     def _last_user_text(self, messages: list) -> str:
@@ -135,9 +214,11 @@ class StorageService:
         return ""
 
     def _persist_assistant(self, session_id: str, user_id: str, messages: list, assistant_message: dict) -> None:
-        messages = messages + [assistant_message]
-        self.cache.set_session(session_id, messages[-self.RECENT_MESSAGES:])
-        self.persistence.save_session(session_id, user_id, messages)
+        am = dict(assistant_message)
+        if not am.get("id"):
+            am["id"] = str(uuid.uuid4())
+        messages = messages + [am]
+        self._write_messages(session_id, user_id, messages)
         user_text = self._last_user_text(messages)
         try:
             embedding = generate_embedding(user_text)
@@ -152,6 +233,7 @@ class StorageService:
 
         interrupt is a successful pause: yield it and return, do not treat as
         agent_incomplete. pending.code is never stored in session history.
+        cancelled (client abort / Agent stop) is the same: no assistant, no error.
         """
         assistant_message = None
         try:
@@ -166,6 +248,9 @@ class StorageService:
                         "run_id": event.get("run_id"),
                         "pending": event.get("pending") or [],
                     }
+                    return
+                elif event["type"] == "cancelled":
+                    yield {"type": "cancelled"}
                     return
                 elif event["type"] == "done":
                     assistant_message = event["message"]
@@ -192,6 +277,8 @@ class StorageService:
                 "status": status,
             }
             return
+        except (requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError):
+            return
         except requests.RequestException as exc:
             yield {"type": "error", "error": "agent_unreachable", "detail": str(exc)}
             return
@@ -204,7 +291,7 @@ class StorageService:
                    "detail": "stream ended without done event"}
             return
 
-        history = self.get_session(session_id)
+        history = self.persistence.get_history(session_id) or []
         self._persist_assistant(session_id, user_id, history, assistant_message)
         yield {
             "type": "done",
@@ -213,7 +300,7 @@ class StorageService:
             "user_id": user_id,
         }
 
-    def stream_user_message(self, session_id: str, user_id: str, message: str) -> Iterator[dict]:
+    def stream_user_message(self, session_id: str, user_id: str, message: str, message_id: str | None = None) -> Iterator[dict]:
         """Run a user message through the full pipeline, streaming Agent output.
 
         Yields dict events consumed by the API layer (translated to SSE):
@@ -238,18 +325,26 @@ class StorageService:
         frontend can show "send failed" and the caller never silently fakes
         a reply.
         """
-        # 1-2. Load history + append user + persist.
+        # 1-2. Load full history + append user + persist.
         if self.persistence.get_user_id(session_id) is None:
             self.ensure_guest_room(user_id)
-        history = self.get_session(session_id)
-        messages = history + [{"role": "user", "content": message}]
-        self.cache.set_session(session_id, messages[-self.RECENT_MESSAGES:])
-        self.persistence.save_session(session_id, user_id, messages)
+        history = self.persistence.get_history(session_id)
+        if history is None:
+            history = []
+        else:
+            history = self._ensure_message_ids(session_id, history)
+        user_msg = {"id": self._message_id(message_id), "role": "user", "content": message}
+        messages = history + [user_msg]
+        self._write_messages(session_id, user_id, messages)
 
         yield from self._relay_agent_events(
             session_id,
             user_id,
-            self.agent.stream(session_id=session_id, user_id=user_id, messages=messages),
+            self.agent.stream(
+                session_id=session_id,
+                user_id=user_id,
+                messages=self._for_agent(messages),
+            ),
         )
 
     def stream_resume(self, session_id: str, user_id: str, run_id: str, results: list) -> Iterator[dict]:
@@ -258,5 +353,17 @@ class StorageService:
             session_id,
             user_id,
             self.agent.resume_stream(run_id, results),
+        )
+
+    def stream_truncated(self, session_id: str, user_id: str, messages: list) -> Iterator[dict]:
+        """Run Agent on an already-truncated, persisted message list."""
+        yield from self._relay_agent_events(
+            session_id,
+            user_id,
+            self.agent.stream(
+                session_id=session_id,
+                user_id=user_id,
+                messages=self._for_agent(messages),
+            ),
         )
 

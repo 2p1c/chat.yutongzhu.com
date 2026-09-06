@@ -74,6 +74,10 @@
     return lucideSvg(['M20 6 9 17l-5-5']);
   }
 
+  function xIcon() {
+    return lucideSvg(['M18 6 6 18', 'm6 6 12 12']);
+  }
+
   function fallbackCopy(text) {
     var ta = document.createElement('textarea');
     ta.value = text;
@@ -589,6 +593,7 @@
     roleEl.className = 'chat-role';
     roleEl.textContent = msg.role === 'user' ? 'You' : (msg.mock ? 'Agent (Mock)' : 'Agent');
     div.appendChild(roleEl);
+    if (msg.id) div.setAttribute('data-message-id', msg.id);
     renderMessageContent(div, msg.content, true);
     return div;
   }
@@ -631,6 +636,20 @@
     })();
 
     var sending = false;
+    var streamAbort = null;
+
+    function sendArrowIcon() {
+      var svg = lucideSvg(['M12 19V5', 'm5 12 7-7 7 7']);
+      svg.setAttribute('class', 'chat-send-icon');
+      return svg;
+    }
+
+    function sendStopIcon() {
+      var svg = lucideSvg([], [{ w: '10', h: '10', x: '7', y: '7', rx: '1', ry: '1' }]);
+      svg.setAttribute('class', 'chat-send-icon');
+      svg.setAttribute('fill', 'currentColor');
+      return svg;
+    }
 
     function autogrow() {
       textarea.style.height = 'auto';
@@ -638,7 +657,23 @@
     }
 
     function updateSend() {
-      sendBtn.disabled = sending || textarea.value.trim().length === 0;
+      if (sending) {
+        sendBtn.disabled = false;
+        sendBtn.classList.add('chat-send-stop');
+        sendBtn.setAttribute('aria-label', '停止');
+        sendBtn.setAttribute('title', '停止');
+        sendBtn.textContent = '';
+        sendBtn.appendChild(sendStopIcon());
+        if (messages) messages.classList.add('is-generating');
+        return;
+      }
+      sendBtn.classList.remove('chat-send-stop');
+      sendBtn.setAttribute('aria-label', 'Send');
+      sendBtn.setAttribute('title', 'Send');
+      sendBtn.textContent = '';
+      sendBtn.appendChild(sendArrowIcon());
+      sendBtn.disabled = textarea.value.trim().length === 0;
+      if (messages) messages.classList.remove('is-generating');
     }
 
     // msg: { role: 'user'|'assistant', content: string, mock?: boolean }
@@ -858,7 +893,7 @@
         updateSend();
         return;
       }
-      sending = true;
+      sending = false;
       updateSend();
       showHitlCard(saved);
     }
@@ -867,7 +902,7 @@
       var sid = currentSid();
       var payload = { run_id: evt.run_id, pending: evt.pending || [] };
       saveHitl(sid, payload);
-      sending = true;
+      sending = false;
       updateSend();
       if (isRunWhatever(sid)) {
         resumeHitl(sid, payload, 'approve');
@@ -930,6 +965,9 @@
               if (onInterrupt) onInterrupt(json);
               return;
             }
+            if (eventName === 'cancelled') {
+              return;
+            }
             if (eventName === 'loop') {
               if (onLoop) onLoop(json);
               continue;
@@ -953,8 +991,11 @@
       messages.scrollTop = messages.scrollHeight;
       var assistantText = '';
       var streamFinalized = false;
+      var ac = new AbortController();
+      streamAbort = ac;
 
       function failAndCleanup(reason) {
+        streamAbort = null;
         bubble.remove();
         console.error('[chat] send failed:', reason);
         addMessage({ role: 'assistant', mock: true, content: '[Send failed — ' + reason + ']' });
@@ -965,7 +1006,8 @@
       return apiFetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: ac.signal
       })
         .then(function (r) {
           if (r.status === 401) throw new Error('not authenticated');
@@ -990,6 +1032,13 @@
           ).then(function () { return interruptEvt; });
         })
         .then(function (interruptEvt) {
+          streamAbort = null;
+          if (ac.signal.aborted) {
+            if (bubble.parentNode && !streamFinalized) bubble.remove();
+            sending = false;
+            updateSend();
+            return;
+          }
           if (interruptEvt) {
             if (!assistantText) bubble.remove();
             handleInterrupt(interruptEvt);
@@ -1004,6 +1053,20 @@
           try { window.dispatchEvent(new CustomEvent('chat:message-sent')); } catch (e) {}
         })
         .catch(function (err) {
+          streamAbort = null;
+          if (err && (err.name === 'AbortError' || err.code === 20)) {
+            if (bubble.parentNode && !streamFinalized) bubble.remove();
+            sending = false;
+            updateSend();
+            return;
+          }
+          if (err && String(err.message || '').indexOf('HTTP 409') === 0) {
+            if (bubble.parentNode) bubble.remove();
+            sending = false;
+            updateSend();
+            restoreSession();
+            return;
+          }
           if (err && err.sseError) {
             var payload = err.payload || {};
             var reason = payload.detail || payload.error || 'agent error';
@@ -1015,10 +1078,117 @@
         });
     }
 
+    var editState = null;
+
+    function setComposerHidden(hidden) {
+      if (composerWrap) composerWrap.hidden = !!hidden;
+    }
+
+    function cancelEdit() {
+      if (!editState) return;
+      renderMessageContent(editState.bubble, editState.raw, true);
+      editState = null;
+      setComposerHidden(false);
+    }
+
+    function startEdit(bubble) {
+      if (sending) return;
+      var mid = bubble.getAttribute('data-message-id');
+      if (!mid) return;
+      if (editState && editState.bubble === bubble) return;
+      cancelEdit();
+      var body = bubble.querySelector('.chat-body');
+      var raw = (body && (body.getAttribute('data-raw') || body.textContent)) || '';
+      editState = { bubble: bubble, raw: raw, id: mid };
+      while (bubble.childNodes.length > 1) bubble.removeChild(bubble.lastChild);
+      var wrap = document.createElement('div');
+      wrap.className = 'chat-edit';
+      var input = document.createElement('textarea');
+      input.className = 'chat-edit-text';
+      input.rows = 1;
+      input.value = raw;
+      input.setAttribute('aria-label', 'Edit message');
+      var cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'chat-edit-btn chat-edit-cancel';
+      cancel.setAttribute('aria-label', '取消');
+      cancel.setAttribute('title', '取消');
+      var cancelSvg = xIcon();
+      cancelSvg.setAttribute('class', 'chat-send-icon');
+      cancel.appendChild(cancelSvg);
+      var confirm = document.createElement('button');
+      confirm.type = 'button';
+      confirm.className = 'chat-edit-btn chat-edit-ok';
+      confirm.setAttribute('aria-label', '确认');
+      confirm.setAttribute('title', '确认');
+      var confirmSvg = checkIcon();
+      confirmSvg.setAttribute('class', 'chat-send-icon');
+      confirm.appendChild(confirmSvg);
+      function growEdit() {
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+      }
+      function updateEditOk() {
+        confirm.disabled = input.value.trim().length === 0;
+      }
+      function commit() {
+        var text = input.value.trim();
+        if (!text) return;
+        var id = editState.id;
+        editState = null;
+        setComposerHidden(false);
+        var node = bubble.nextSibling;
+        while (node) {
+          var next = node.nextSibling;
+          node.remove();
+          node = next;
+        }
+        removeHitlCards();
+        clearHitl(currentSid());
+        renderMessageContent(bubble, text, true);
+        sending = true;
+        updateSend();
+        streamAgent('/api/sessions/' + currentSid() + '/messages/' + id, { message: text });
+      }
+      input.addEventListener('input', function () {
+        growEdit();
+        updateEditOk();
+      });
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelEdit();
+        }
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          commit();
+        }
+      });
+      cancel.addEventListener('click', function (e) {
+        e.stopPropagation();
+        cancelEdit();
+      });
+      confirm.addEventListener('click', function (e) {
+        e.stopPropagation();
+        commit();
+      });
+      wrap.appendChild(input);
+      wrap.appendChild(cancel);
+      wrap.appendChild(confirm);
+      bubble.appendChild(wrap);
+      hideComposerCard();
+      setComposerHidden(true);
+      growEdit();
+      updateEditOk();
+      input.focus();
+      input.setSelectionRange(raw.length, raw.length);
+    }
+
     function send() {
       var text = textarea.value.trim();
       if (!text || sending) return;
       var sid = currentSid();
+      cancelEdit();
 
       if (text === '/run-whatever') {
         var next = !isRunWhatever(sid);
@@ -1040,15 +1210,17 @@
 
       sending = true;
       updateSend();
-      addMessage({ role: 'user', content: text });
+      var msgId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : '';
+      addMessage({ role: 'user', content: text, id: msgId });
       // Clear the input immediately on send so the user can keep typing while
       // the agent streams its reply. The message text itself is already in the
       // chat history above.
       textarea.value = '';
       textarea.style.height = 'auto';
       hideComposerCard();
+      clearHitl(sid);
       clearLoopDebug();
-      streamAgent('/api/sessions/' + sid + '/messages', { message: text });
+      streamAgent('/api/sessions/' + sid + '/messages', { message: text, id: msgId || undefined });
     }
 
     textarea.addEventListener('input', function () {
@@ -1083,7 +1255,24 @@
         send();
       }
     });
-    sendBtn.addEventListener('click', send);
+    sendBtn.addEventListener('click', function () {
+      if (sending) {
+        if (streamAbort) streamAbort.abort();
+        return;
+      }
+      send();
+    });
+    if (messages) {
+      messages.addEventListener('click', function (e) {
+        if (sending) return;
+        if (e.target.closest && e.target.closest('.chat-message-copy')) return;
+        if (e.target.closest && (e.target.closest('.chat-edit') || e.target.closest('.chat-edit-btn'))) return;
+        var bubble = e.target.closest && e.target.closest('.chat-message-user');
+        if (!bubble || !messages.contains(bubble)) return;
+        startEdit(bubble);
+      });
+    }
+    updateSend();
   })();
 
   /* ── Dynamic year (this page is static HTML so the server-side ${...} approach doesn't apply) ── */

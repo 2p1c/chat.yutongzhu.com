@@ -24,6 +24,7 @@ router = APIRouter(prefix="/api")
 
 class MessageIn(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
+    id: str | None = None
 
 
 class ResumeResultIn(BaseModel):
@@ -41,11 +42,11 @@ def _storage(request: Request) -> StorageService:
     return request.app.state.storage
 
 
-def _require_uuid(session_id: str) -> str:
+def _require_uuid(value: str, name: str = "session_id") -> str:
     try:
-        return str(UUID(session_id))
+        return str(UUID(value))
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"invalid session_id: {session_id!r}")
+        raise HTTPException(status_code=400, detail=f"invalid {name}: {value!r}")
 
 
 def _user_id(user: dict) -> str:
@@ -61,7 +62,7 @@ _SSE_HEADERS = {
 
 
 def _sse_chunks(events):
-    """Translate StorageService events into SSE bytes. interrupt has no [DONE]."""
+    """Translate StorageService events into SSE bytes. interrupt/cancelled have no [DONE]."""
     for event in events:
         if event["type"] == "loop":
             yield (
@@ -76,6 +77,9 @@ def _sse_chunks(events):
                 f"data: {json.dumps({'run_id': event.get('run_id'), 'pending': event.get('pending') or []}, ensure_ascii=False)}\n\n"
             )
             return
+        elif event["type"] == "cancelled":
+            yield "event: cancelled\ndata: {}\n\n"
+            return
         elif event["type"] == "done":
             yield f"data: {json.dumps({'done': True, 'message': event['message']}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
@@ -88,6 +92,28 @@ def _sse_chunks(events):
                 payload["status"] = event["status"]
             yield f"event: error\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             break  # errors are terminal; close the stream
+
+
+async def _sse_body(request: Request, storage: StorageService, session_id: str, events):
+    gen = _sse_chunks(events)
+    try:
+        for chunk in gen:
+            if await request.is_disconnected():
+                break
+            yield chunk
+    finally:
+        gen.close()
+        storage.end_generation(session_id)
+
+
+def _stream(request: Request, storage: StorageService, session_id: str, events, occupied: bool = False):
+    if not occupied and not storage.try_begin_generation(session_id):
+        raise HTTPException(status_code=409, detail="session is generating")
+    return StreamingResponse(
+        _sse_body(request, storage, session_id, events),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
 
 
 @router.get("/health")
@@ -131,6 +157,7 @@ def post_message(
       - event: loop / data: {type, step, ...}                     0..N (local Agent)
       - data: {"delta": "..."}                                    0..N
       - event: interrupt / data: {"run_id", "pending"}            0 or 1 (no [DONE])
+      - event: cancelled / data: {}                               0 or 1 (stop; no [DONE])
       - data: {"done": true, "message": {role, content, ...}}     1 if finished
       - data: [DONE]                                              terminator (done only)
       - event: error / data: {"error": "...", "detail": "..."}    0..1
@@ -141,10 +168,11 @@ def post_message(
     if not storage.session_owned_by(session_id, uid):
         raise HTTPException(status_code=404, detail="session not found")
 
-    return StreamingResponse(
-        _sse_chunks(storage.stream_user_message(session_id, uid, body.message)),
-        media_type="text/event-stream",
-        headers=_SSE_HEADERS,
+    return _stream(
+        request,
+        storage,
+        session_id,
+        storage.stream_user_message(session_id, uid, body.message, body.id),
     )
 
 
@@ -166,8 +194,48 @@ def post_resume(
         raise HTTPException(status_code=404, detail="session not found")
 
     results = [item.model_dump() for item in body.results]
-    return StreamingResponse(
-        _sse_chunks(storage.stream_resume(session_id, uid, body.run_id, results)),
-        media_type="text/event-stream",
-        headers=_SSE_HEADERS,
+    return _stream(
+        request,
+        storage,
+        session_id,
+        storage.stream_resume(session_id, uid, body.run_id, results),
+    )
+
+
+@router.post("/sessions/{session_id}/messages/{message_id}")
+def edit_message(
+    session_id: str,
+    message_id: str,
+    body: MessageIn,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """POST /api/sessions/{session_id}/messages/{message_id} — edit a user bubble (SSE).
+
+    Truncates history after that user message, then streams a new Agent run.
+    Same SSE shapes as POST .../messages.
+    """
+    _require_uuid(session_id)
+    _require_uuid(message_id, "message_id")
+    text = body.message.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="message is empty")
+    storage = _storage(request)
+    uid = _user_id(user)
+    if not storage.session_owned_by(session_id, uid):
+        raise HTTPException(status_code=404, detail="session not found")
+    if not storage.try_begin_generation(session_id):
+        raise HTTPException(status_code=409, detail="session is generating")
+    try:
+        messages = storage.truncate_user_message(session_id, uid, message_id, text)
+    except ValueError as exc:
+        storage.end_generation(session_id)
+        status = getattr(exc, "status_code", 400)
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return _stream(
+        request,
+        storage,
+        session_id,
+        storage.stream_truncated(session_id, uid, messages),
+        occupied=True,
     )

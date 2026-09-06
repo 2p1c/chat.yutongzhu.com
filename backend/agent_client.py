@@ -61,6 +61,9 @@ def _iter_sse(response: requests.Response) -> Iterator[dict]:
                 "pending": evt.get("pending") if isinstance(evt, dict) else [],
             }
             return
+        if event_name == "cancelled":
+            yield {"type": "cancelled"}
+            return
         if event_name == "error" or (isinstance(evt, dict) and evt.get("error")):
             yield {
                 "type": "error",
@@ -104,6 +107,7 @@ class AgentRuntime:
           - {"type": "loop",  "event": {...}}              0..N  (local Agent only)
           - {"type": "delta", "delta": "..."}              0..N
           - {"type": "interrupt", "run_id", "pending"}     0 or 1 (HITL; no done)
+          - {"type": "cancelled"}                          0 or 1 (client abort; no done)
           - {"type": "done",  "message": {...}}            1 if the run finished
 
         Stops early on Agent 5xx (the exception propagates to the caller).
