@@ -24,6 +24,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS token_usage JSONB NOT NULL DEFAULT '{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}'::jsonb;
+
+-- Compacted history sent to the Agent. NULL means "same as messages".
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS llm_messages JSONB;
+
 -- ② Semantic Layer — embedding vectors for cross-session memory retrieval
 CREATE TABLE IF NOT EXISTS memory_vectors (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

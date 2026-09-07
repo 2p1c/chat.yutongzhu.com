@@ -12,6 +12,37 @@ from psycopg.rows import dict_row
 
 from .config import DATABASE_URL
 
+EMPTY_USAGE = {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "last_prompt_tokens": 0,
+}
+
+
+def normalize_usage(raw) -> dict:
+    """Coerce Agent/DB usage objects into non-negative ints."""
+    if not isinstance(raw, dict):
+        return dict(EMPTY_USAGE)
+
+    def n(key: str) -> int:
+        v = raw.get(key, 0)
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, v)
+
+    prompt = n("prompt_tokens")
+    completion = n("completion_tokens")
+    total = n("total_tokens") or prompt + completion
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
+        "last_prompt_tokens": n("last_prompt_tokens"),
+    }
+
 
 class PersistenceLayer:
     """CRUD for the `sessions` table."""
@@ -46,6 +77,106 @@ class PersistenceLayer:
                 cur.execute("SELECT messages FROM sessions WHERE id = %s", (session_id,))
                 row = cur.fetchone()
         return row["messages"] if row else None
+
+    def get_token_usage(self, session_id: str) -> dict:
+        """Return this session's accumulated token usage, or zeros if unknown."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT token_usage FROM sessions WHERE id = %s", (session_id,))
+                row = cur.fetchone()
+        if not row:
+            return dict(EMPTY_USAGE)
+        return normalize_usage(row["token_usage"])
+
+    def add_token_usage(self, session_id: str, delta, last_prompt_tokens: int | None = None) -> dict:
+        """Add one Agent run's usage onto the session total. Returns the new total.
+
+        last_prompt_tokens is this request's context occupancy (not accumulated).
+        Pass 0 after /compact so the frontend drops the 80% hint.
+        """
+        d = normalize_usage(delta)
+        zero_delta = (
+            d["prompt_tokens"] == 0
+            and d["completion_tokens"] == 0
+            and d["total_tokens"] == 0
+        )
+        if zero_delta and last_prompt_tokens is None:
+            return self.get_token_usage(session_id)
+        last = (
+            d["prompt_tokens"]
+            if last_prompt_tokens is None
+            else max(0, int(last_prompt_tokens))
+        )
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE sessions
+                    SET token_usage = jsonb_build_object(
+                            'prompt_tokens',
+                            COALESCE((token_usage->>'prompt_tokens')::int, 0) + %s,
+                            'completion_tokens',
+                            COALESCE((token_usage->>'completion_tokens')::int, 0) + %s,
+                            'total_tokens',
+                            COALESCE((token_usage->>'total_tokens')::int, 0) + %s,
+                            'last_prompt_tokens',
+                            %s
+                        ),
+                        updated_at = %s
+                    WHERE id = %s
+                    RETURNING token_usage
+                    """,
+                    (
+                        d["prompt_tokens"],
+                        d["completion_tokens"],
+                        d["total_tokens"],
+                        last,
+                        datetime.now(timezone.utc),
+                        session_id,
+                    ),
+                )
+                row = cur.fetchone()
+        if not row:
+            return dict(EMPTY_USAGE)
+        return normalize_usage(row["token_usage"])
+
+    def get_llm_messages(self, session_id: str):
+        """Return compacted Agent history, or None if the session uses display messages."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT llm_messages FROM sessions WHERE id = %s",
+                    (session_id,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        raw = row["llm_messages"]
+        return raw if isinstance(raw, list) else None
+
+    def set_llm_messages(self, session_id: str, messages: list) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE sessions
+                    SET llm_messages = %s::jsonb, updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (json.dumps(messages, ensure_ascii=False), datetime.now(timezone.utc), session_id),
+                )
+
+    def clear_llm_messages(self, session_id: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE sessions
+                    SET llm_messages = NULL, updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (datetime.now(timezone.utc), session_id),
+                )
 
     def get_user_id(self, session_id: str):
         """Return the session's user_id, or None if unknown."""

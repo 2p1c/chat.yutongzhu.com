@@ -27,6 +27,28 @@
     return fetch(API_BASE + path, opts);
   }
 
+  var CONTEXT_WINDOW = 1000000;
+  var COMPACT_RATIO = 0.8;
+
+  function applySessionUsage(usage) {
+    var el = document.getElementById('chat-usage');
+    if (!el) return;
+    var total = 0;
+    if (usage && typeof usage.total_tokens === 'number' && isFinite(usage.total_tokens)) {
+      total = usage.total_tokens;
+    }
+    if (total <= 0) {
+      el.hidden = true;
+      el.textContent = '';
+    } else {
+      el.hidden = false;
+      el.textContent = total.toLocaleString() + ' tokens';
+    }
+    try {
+      window.dispatchEvent(new CustomEvent('chat:usage', { detail: usage || null }));
+    } catch (e) {}
+  }
+
   function apiErrorDetail(data, fallback) {
     if (!data) return fallback;
     if (typeof data.detail === 'string') return data.detail;
@@ -707,7 +729,12 @@
           return r.ok ? r.json() : null;
         })
         .then(function (data) {
-          if (data) render(data.messages);
+          if (data) {
+            render(data.messages);
+            applySessionUsage(data.usage);
+          } else {
+            applySessionUsage(null);
+          }
           restoreHitlForSession(sessionId);
         })
         .catch(function (err) {
@@ -761,6 +788,7 @@
       composer.hidden = true;
       composer.textContent = '';
       composer.className = 'composer-card';
+      composer.removeAttribute('data-compact-hint');
       if (composerWrap) composerWrap.classList.remove('composer-open');
     }
 
@@ -769,6 +797,7 @@
       composer.hidden = false;
       composer.className = 'composer-card composer-card-' + kind;
       composer.textContent = '';
+      composer.removeAttribute('data-compact-hint');
       if (composerWrap) composerWrap.classList.add('composer-open');
     }
 
@@ -790,11 +819,40 @@
         btn.appendChild(hintEl);
       }
       btn.addEventListener('click', onClick);
+      btn.addEventListener('mouseenter', function () {
+        if (!isSlashMenuOpen()) return;
+        var buttons = slashOptionButtons();
+        var i = buttons.indexOf(btn);
+        if (i >= 0) setSlashHighlight(i);
+      });
       composer.appendChild(btn);
       return btn;
     }
 
+    var slashIndex = 0;
+
+    function isSlashMenuOpen() {
+      return !!(composer && !composer.hidden && composer.classList.contains('composer-card-slash'));
+    }
+
+    function slashOptionButtons() {
+      if (!composer) return [];
+      return Array.prototype.slice.call(composer.querySelectorAll('.composer-option'));
+    }
+
+    function setSlashHighlight(index) {
+      var buttons = slashOptionButtons();
+      if (!buttons.length) return;
+      var i = ((index % buttons.length) + buttons.length) % buttons.length;
+      slashIndex = i;
+      buttons.forEach(function (btn, j) {
+        if (j === i) btn.classList.add('is-active');
+        else btn.classList.remove('is-active');
+      });
+    }
+
     var SLASH_COMMANDS = [
+      { cmd: '/compact', hint: '压缩旧对话，界面气泡保留' },
       { cmd: '/rag', hint: '检索知识库，空格后写检索词', insertOnly: true },
       { cmd: '/run-whatever', hint: '跳过审批，自动执行页面修改' }
     ];
@@ -811,7 +869,13 @@
       if (isHitlCardOpen()) return;
       var matches = matchingSlash(textarea.value);
       if (!matches.length) {
-        if (composer && composer.classList.contains('composer-card-slash')) hideComposerCard();
+        if (
+          composer &&
+          composer.classList.contains('composer-card-slash') &&
+          composer.getAttribute('data-compact-hint') !== '1'
+        ) {
+          hideComposerCard();
+        }
         return;
       }
       showComposerCard('slash');
@@ -830,7 +894,48 @@
           send();
         });
       });
+      setSlashHighlight(0);
     }
+
+    function lastPromptTokens(usage) {
+      var n = usage && usage.last_prompt_tokens;
+      if (typeof n !== 'number' || !isFinite(n)) return 0;
+      return n;
+    }
+
+    function showCompactHint() {
+      if (isHitlCardOpen() || sending) return;
+      showComposerCard('slash');
+      composer.setAttribute('data-compact-hint', '1');
+      var summaryEl = document.createElement('div');
+      summaryEl.className = 'composer-summary';
+      summaryEl.textContent = '上下文已超过 80%，建议执行 /compact';
+      composer.appendChild(summaryEl);
+      addComposerOption('/compact', '压缩旧对话，界面气泡保留', function () {
+        textarea.value = '/compact';
+        hideComposerCard();
+        send();
+      });
+      setSlashHighlight(0);
+    }
+
+    var lastUsage = null;
+    function maybeSuggestCompact(usage) {
+      if (usage !== undefined) lastUsage = usage;
+      var over = lastPromptTokens(lastUsage) >= CONTEXT_WINDOW * COMPACT_RATIO;
+      var hintOpen = composer && !composer.hidden && composer.getAttribute('data-compact-hint') === '1';
+      if (!over) {
+        if (hintOpen) hideComposerCard();
+        return;
+      }
+      if (textarea.value.trim()) return;
+      if (hintOpen) return;
+      showCompactHint();
+    }
+
+    window.addEventListener('chat:usage', function (e) {
+      maybeSuggestCompact(e && e.detail);
+    });
 
     function removeHitlCards() {
       if (isHitlCardOpen()) hideComposerCard();
@@ -935,7 +1040,7 @@
     // onMessage(json) receives parsed JSON from `data:` lines.
     // The terminator `[DONE]` resolves; `event: error` rejects.
     // `event: interrupt` calls onInterrupt and resolves — it is not a failure.
-    function readSSE(reader, onMessage, onError, onLoop, onInterrupt) {
+    function readSSE(reader, onMessage, onError, onLoop, onInterrupt, onCancelled) {
       var decoder = new TextDecoder('utf-8');
       var buffer = '';
       function pump() {
@@ -966,6 +1071,7 @@
               return;
             }
             if (eventName === 'cancelled') {
+              if (onCancelled) onCancelled(json);
               return;
             }
             if (eventName === 'loop') {
@@ -1024,11 +1130,13 @@
                 assistantText = evt.message.content || '';
                 renderMessageContent(bubble, assistantText, true);
                 streamFinalized = true;
+                applySessionUsage(evt.usage);
               }
             },
             null,
             appendLoopEvent,
-            function onInterrupt(evt) { interruptEvt = evt; }
+            function onInterrupt(evt) { interruptEvt = evt; applySessionUsage(evt && evt.usage); },
+            function onCancelled(evt) { applySessionUsage(evt && evt.usage); }
           ).then(function () { return interruptEvt; });
         })
         .then(function (interruptEvt) {
@@ -1050,6 +1158,7 @@
           sending = false;
           updateSend();
           textarea.focus();
+          maybeSuggestCompact();
           try { window.dispatchEvent(new CustomEvent('chat:message-sent')); } catch (e) {}
         })
         .catch(function (err) {
@@ -1230,27 +1339,25 @@
     });
     textarea.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
-        if (composer && !composer.hidden && composer.classList.contains('composer-card-slash')) {
+        if (isSlashMenuOpen()) {
           e.preventDefault();
           hideComposerCard();
         }
         return;
       }
+      if (isSlashMenuOpen() && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        setSlashHighlight(slashIndex + (e.key === 'ArrowDown' ? 1 : -1));
+        return;
+      }
       // Enter sends; Shift+Enter inserts a newline.
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (!isHitlCardOpen()) {
-          var matches = matchingSlash(textarea.value);
-          if (matches.length === 1) {
-            if (matches[0].insertOnly) {
-              textarea.value = matches[0].cmd + ' ';
-              hideComposerCard();
-              autogrow();
-              updateSend();
-              return;
-            }
-            textarea.value = matches[0].cmd;
-          }
+        if (isSlashMenuOpen()) {
+          var buttons = slashOptionButtons();
+          var btn = buttons[slashIndex] || buttons[0];
+          if (btn) btn.click();
+          return;
         }
         send();
       }
@@ -1348,18 +1455,19 @@
     }
 
     function loadSessionIntoView(sessionId) {
-      if (!sessionId) { renderMessages([]); return; }
+      if (!sessionId) { renderMessages([]); applySessionUsage(null); return; }
       apiFetch('/api/sessions/' + encodeURIComponent(sessionId))
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
           renderMessages((data && data.messages) || []);
+          applySessionUsage(data && data.usage);
           try {
             window.dispatchEvent(new CustomEvent('chat:session-changed', {
               detail: { sessionId: sessionId }
             }));
           } catch (e) {}
         })
-        .catch(function () { renderMessages([]); });
+        .catch(function () { renderMessages([]); applySessionUsage(null); });
     }
 
     function highlightActive() {

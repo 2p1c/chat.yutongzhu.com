@@ -15,7 +15,7 @@ from agent_client import AgentRuntime
 from .cache import CacheLayer
 from .config import CACHE_RECENT_MESSAGES
 from .embeddings import generate_embedding
-from .persistence import PersistenceLayer
+from .persistence import EMPTY_USAGE, PersistenceLayer, normalize_usage
 from .semantic import SemanticLayer
 
 
@@ -81,7 +81,13 @@ class StorageService:
             return None
         history = self.persistence.get_history(session_id) if owner is not None else None
         messages = self._ensure_message_ids(session_id, history) if history is not None else []
-        return {"session_id": session_id, "user_id": user_id, "messages": messages}
+        usage = self.persistence.get_token_usage(session_id) if owner is not None else dict(EMPTY_USAGE)
+        return {
+            "session_id": session_id,
+            "user_id": user_id,
+            "messages": messages,
+            "usage": usage,
+        }
 
     def session_owned_by(self, session_id: str, user_id: str) -> bool:
         """True if the row is missing (first write) or belongs to this user."""
@@ -126,7 +132,12 @@ class StorageService:
         self.ensure_guest_room(user_id)
         new_id = str(uuid.uuid4())
         self.persistence.save_session(new_id, user_id, [])
-        return {"session_id": new_id, "user_id": user_id, "messages": []}
+        return {
+            "session_id": new_id,
+            "user_id": user_id,
+            "messages": [],
+            "usage": dict(EMPTY_USAGE),
+        }
 
     def try_begin_generation(self, session_id: str) -> bool:
         if session_id in self._generating:
@@ -203,6 +214,7 @@ class StorageService:
         edited["content"] = text
         messages = history[:idx] + [edited]
         self._write_messages(session_id, user_id, messages)
+        self.persistence.clear_llm_messages(session_id)
         return messages
 
     # -- Core message flow (streaming) ------------------------------------
@@ -213,12 +225,22 @@ class StorageService:
                 return msg.get("content") or ""
         return ""
 
-    def _persist_assistant(self, session_id: str, user_id: str, messages: list, assistant_message: dict) -> None:
+    def _persist_assistant(
+        self,
+        session_id: str,
+        user_id: str,
+        messages: list,
+        assistant_message: dict,
+        *,
+        update_llm: bool = True,
+    ) -> None:
         am = dict(assistant_message)
         if not am.get("id"):
             am["id"] = str(uuid.uuid4())
         messages = messages + [am]
         self._write_messages(session_id, user_id, messages)
+        if update_llm:
+            self._append_llm(session_id, am)
         user_text = self._last_user_text(messages)
         try:
             embedding = generate_embedding(user_text)
@@ -228,6 +250,22 @@ class StorageService:
             # Semantic layer failure must not block the main message flow.
             print(f"[storage] semantic memory skipped for session {session_id}: {exc}")
 
+    def _add_run_usage(self, session_id: str, delta, last_prompt_tokens: int | None = None) -> dict:
+        """Add one Agent HTTP request's usage to the session total."""
+        return self.persistence.add_token_usage(
+            session_id, delta, last_prompt_tokens=last_prompt_tokens
+        )
+
+    def _append_llm(self, session_id: str, message: dict) -> None:
+        llm = self.persistence.get_llm_messages(session_id)
+        if llm is None:
+            return
+        self.persistence.set_llm_messages(session_id, llm + [message])
+
+    def _agent_messages(self, session_id: str, display: list) -> list:
+        llm = self.persistence.get_llm_messages(session_id)
+        return llm if llm is not None else display
+
     def _relay_agent_events(self, session_id: str, user_id: str, events: Iterator[dict]) -> Iterator[dict]:
         """Forward Agent SSE events. Persist assistant only on done.
 
@@ -236,6 +274,7 @@ class StorageService:
         cancelled (client abort / Agent stop) is the same: no assistant, no error.
         """
         assistant_message = None
+        run_usage = None
         try:
             for event in events:
                 if event["type"] == "delta":
@@ -243,17 +282,25 @@ class StorageService:
                 elif event["type"] == "loop":
                     yield {"type": "loop", "event": event["event"]}
                 elif event["type"] == "interrupt":
+                    run_usage = event.get("usage")
+                    last = normalize_usage(run_usage)["prompt_tokens"]
+                    usage = self._add_run_usage(session_id, run_usage, last_prompt_tokens=last)
                     yield {
                         "type": "interrupt",
                         "run_id": event.get("run_id"),
                         "pending": event.get("pending") or [],
+                        "usage": usage,
                     }
                     return
                 elif event["type"] == "cancelled":
-                    yield {"type": "cancelled"}
+                    run_usage = event.get("usage")
+                    last = normalize_usage(run_usage)["prompt_tokens"]
+                    usage = self._add_run_usage(session_id, run_usage, last_prompt_tokens=last)
+                    yield {"type": "cancelled", "usage": usage}
                     return
                 elif event["type"] == "done":
                     assistant_message = event["message"]
+                    run_usage = event.get("usage")
                     break
                 elif event["type"] == "error":
                     yield {
@@ -293,11 +340,15 @@ class StorageService:
 
         history = self.persistence.get_history(session_id) or []
         self._persist_assistant(session_id, user_id, history, assistant_message)
+        usage = self._add_run_usage(
+            session_id, run_usage, last_prompt_tokens=normalize_usage(run_usage)["prompt_tokens"]
+        )
         yield {
             "type": "done",
             "message": assistant_message,
             "session_id": session_id,
             "user_id": user_id,
+            "usage": usage,
         }
 
     def stream_user_message(self, session_id: str, user_id: str, message: str, message_id: str | None = None) -> Iterator[dict]:
@@ -337,15 +388,96 @@ class StorageService:
         messages = history + [user_msg]
         self._write_messages(session_id, user_id, messages)
 
+        if (message or "").strip() == "/compact":
+            yield from self._stream_compact(session_id, user_id, messages, history)
+            return
+
+        self._append_llm(session_id, user_msg)
         yield from self._relay_agent_events(
             session_id,
             user_id,
             self.agent.stream(
                 session_id=session_id,
                 user_id=user_id,
-                messages=self._for_agent(messages),
+                messages=self._for_agent(self._agent_messages(session_id, messages)),
             ),
         )
+
+    def _stream_compact(
+        self,
+        session_id: str,
+        user_id: str,
+        display_messages: list,
+        history_before: list,
+    ) -> Iterator[dict]:
+        """Run Runtime /compact. Updates llm_messages; does not start a tool loop."""
+        source = self.persistence.get_llm_messages(session_id)
+        if source is None:
+            source = history_before
+        try:
+            result = self.agent.compact(
+                session_id=session_id,
+                user_id=user_id,
+                messages=self._for_agent(source),
+            )
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            detail = ""
+            if exc.response is not None:
+                try:
+                    detail = exc.response.text
+                except Exception:
+                    detail = str(exc)
+            yield {
+                "type": "error",
+                "error": "agent_http_error",
+                "detail": detail or str(exc),
+                "status": status,
+            }
+            return
+        except requests.RequestException as exc:
+            yield {"type": "error", "error": "agent_unreachable", "detail": str(exc)}
+            return
+        except Exception as exc:
+            yield {"type": "error", "error": "agent_error", "detail": str(exc)}
+            return
+
+        if not isinstance(result, dict):
+            yield {"type": "error", "error": "agent_error", "detail": "invalid compact response"}
+            return
+
+        skipped = bool(result.get("skipped"))
+        compacted = result.get("compacted")
+        if not skipped:
+            if not isinstance(compacted, list):
+                yield {
+                    "type": "error",
+                    "error": "agent_error",
+                    "detail": "compacted must be an array",
+                }
+                return
+            self.persistence.set_llm_messages(session_id, compacted)
+
+        notice = result.get("notice") if isinstance(result.get("notice"), str) else ""
+        assistant = {
+            "role": "assistant",
+            "content": notice or "上下文已压缩。",
+        }
+        self._persist_assistant(
+            session_id, user_id, display_messages, assistant, update_llm=False
+        )
+        usage = self._add_run_usage(
+            session_id,
+            result.get("usage"),
+            last_prompt_tokens=0 if not skipped else None,
+        )
+        yield {
+            "type": "done",
+            "message": assistant,
+            "session_id": session_id,
+            "user_id": user_id,
+            "usage": usage,
+        }
 
     def stream_resume(self, session_id: str, user_id: str, run_id: str, results: list) -> Iterator[dict]:
         """Continue a HITL run after the browser eval'd (or rejected) pending JS."""

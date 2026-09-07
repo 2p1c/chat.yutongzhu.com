@@ -1025,7 +1025,8 @@ h2 {
   cursor: pointer;
 }
 
-.composer-option:hover:not(:disabled) {
+.composer-option:hover:not(:disabled),
+.composer-option.is-active:not(:disabled) {
   background: var(--border-color);
 }
 
@@ -1043,15 +1044,35 @@ h2 {
 .chat-input {
   position: relative;
   z-index: 3;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 10px;
+  column-gap: 10px;
   padding: 10px 10px 10px 18px;
   background: var(--code-bg);
   border: 1px solid var(--border-color);
   border-radius: 28px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.chat-textarea {
+  min-width: 0;
+}
+
+.chat-usage {
+  position: absolute;
+  right: 14px;
+  top: calc(100% + 6px);
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--dimmed-text-color);
+  pointer-events: none;
+  user-select: none;
+}
+
+.chat-usage[hidden] {
+  display: none;
 }
 
 .chat-composer.composer-open .chat-input {

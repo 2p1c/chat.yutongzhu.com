@@ -74,14 +74,14 @@ def _sse_chunks(events):
         elif event["type"] == "interrupt":
             yield (
                 "event: interrupt\n"
-                f"data: {json.dumps({'run_id': event.get('run_id'), 'pending': event.get('pending') or []}, ensure_ascii=False)}\n\n"
+                f"data: {json.dumps({'run_id': event.get('run_id'), 'pending': event.get('pending') or [], 'usage': event.get('usage')}, ensure_ascii=False)}\n\n"
             )
             return
         elif event["type"] == "cancelled":
-            yield "event: cancelled\ndata: {}\n\n"
+            yield f"event: cancelled\ndata: {json.dumps({'cancelled': True, 'usage': event.get('usage')}, ensure_ascii=False)}\n\n"
             return
         elif event["type"] == "done":
-            yield f"data: {json.dumps({'done': True, 'message': event['message']}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'message': event['message'], 'usage': event.get('usage')}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         elif event["type"] == "error":
             payload = {
@@ -156,9 +156,9 @@ def post_message(
     SSE event shapes:
       - event: loop / data: {type, step, ...}                     0..N (local Agent)
       - data: {"delta": "..."}                                    0..N
-      - event: interrupt / data: {"run_id", "pending"}            0 or 1 (no [DONE])
-      - event: cancelled / data: {}                               0 or 1 (stop; no [DONE])
-      - data: {"done": true, "message": {role, content, ...}}     1 if finished
+      - event: interrupt / data: {"run_id", "pending", "usage"}    0 or 1 (no [DONE])
+      - event: cancelled / data: {"cancelled", "usage"}           0 or 1 (stop; no [DONE])
+      - data: {"done": true, "message": {...}, "usage"}           1 if finished
       - data: [DONE]                                              terminator (done only)
       - event: error / data: {"error": "...", "detail": "..."}    0..1
     """

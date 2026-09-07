@@ -12,6 +12,7 @@ from storage.config import AGENT_URL
 
 # LLM + tool loops can be slow; 120s is generous without being forever.
 REQUEST_TIMEOUT_SECONDS = 120
+COMPACT_TIMEOUT_SECONDS = 180
 
 
 def _utf8_text(value: str) -> str:
@@ -59,10 +60,14 @@ def _iter_sse(response: requests.Response) -> Iterator[dict]:
                 "type": "interrupt",
                 "run_id": evt.get("run_id") if isinstance(evt, dict) else None,
                 "pending": evt.get("pending") if isinstance(evt, dict) else [],
+                "usage": evt.get("usage") if isinstance(evt, dict) else None,
             }
             return
         if event_name == "cancelled":
-            yield {"type": "cancelled"}
+            yield {
+                "type": "cancelled",
+                "usage": evt.get("usage") if isinstance(evt, dict) else None,
+            }
             return
         if event_name == "error" or (isinstance(evt, dict) and evt.get("error")):
             yield {
@@ -81,7 +86,7 @@ def _iter_sse(response: requests.Response) -> Iterator[dict]:
             content = message.get("content")
             if isinstance(content, str):
                 message["content"] = _utf8_text(content)
-            yield {"type": "done", "message": message}
+            yield {"type": "done", "message": message, "usage": evt.get("usage")}
         event_name = "message"
 
 
@@ -97,6 +102,16 @@ class AgentRuntime:
             f"{self.url}/complete",
             json={"session_id": session_id, "user_id": user_id, "messages": messages},
             timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def compact(self, *, session_id: str, user_id: str, messages: list) -> dict:
+        """One-shot: POST /compact. Returns {compacted, skipped, notice, usage}."""
+        r = requests.post(
+            f"{self.url}/compact",
+            json={"session_id": session_id, "user_id": user_id, "messages": messages},
+            timeout=COMPACT_TIMEOUT_SECONDS,
         )
         r.raise_for_status()
         return r.json()
