@@ -7,11 +7,15 @@ Local (with compose `web` on :8000):
 The static frontend is served by the `web` nginx container, which proxies
 /api to this process so the browser still talks to one origin.
 """
+from contextlib import asynccontextmanager
+
+import anyio.to_thread
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
 from auth.routes import router as auth_router
+from storage.db import close_pool
 from storage.service import StorageService
 
 # Local page is nginx :8000 while uvicorn is :8001 (see frontend/app.js API_BASE).
@@ -20,12 +24,24 @@ _LOCAL_PAGE_ORIGINS = (
     "http://localhost:8000",
 )
 
+# Each in-flight SSE stream occupies a worker thread while waiting on the Agent,
+# and all sync routes share the same pool. anyio's default (40) caps concurrent streams.
+THREADPOOL_SIZE = 200
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    anyio.to_thread.current_default_thread_limiter().total_tokens = THREADPOOL_SIZE
+    yield
+    close_pool()
+
 
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Chat Storage Service",
         description="Three-layer session storage: Redis / PostgreSQL / pgvector.",
         version="0.1.0",
+        lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,

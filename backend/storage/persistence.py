@@ -7,10 +7,7 @@ expires, sessions are recovered from here.
 import json
 from datetime import datetime, timezone
 
-import psycopg
-from psycopg.rows import dict_row
-
-from .config import DATABASE_URL
+from .db import get_pool
 
 EMPTY_USAGE = {
     "prompt_tokens": 0,
@@ -47,11 +44,9 @@ def normalize_usage(raw) -> dict:
 class PersistenceLayer:
     """CRUD for the `sessions` table."""
 
-    def __init__(self, conninfo: str = DATABASE_URL):
-        self.conninfo = conninfo
-
     def _connect(self):
-        return psycopg.connect(self.conninfo, row_factory=dict_row)
+        # Commits on clean exit, rolls back on exception, then returns the connection to the pool.
+        return get_pool().connection()
 
     def save_session(self, session_id: str, user_id: str, messages: list) -> None:
         """INSERT when the session is new, UPDATE when it already exists (upsert on PK)."""

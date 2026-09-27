@@ -25,13 +25,15 @@ class StorageService:
     RECENT_MESSAGES = CACHE_RECENT_MESSAGES  # Redis cache window (最近 N 条)
     GUEST_ID_PREFIX = "guest:"
     GUEST_MAX_SESSIONS = 5
+    # Safety net if a worker dies mid-stream without releasing. Must exceed the
+    # longest normal run; a run that outlives it loses its lock (no renewal).
+    GENERATION_LOCK_TTL_SECONDS = 600
 
     def __init__(self, cache=None, persistence=None, semantic=None, agent=None):
         self.cache = cache or CacheLayer()
         self.persistence = persistence or PersistenceLayer()
         self.semantic = semantic or SemanticLayer()
         self.agent = agent or AgentRuntime()
-        self._generating = set()
 
     # -- Cache ------------------------------------------------------------
 
@@ -139,14 +141,12 @@ class StorageService:
             "usage": dict(EMPTY_USAGE),
         }
 
-    def try_begin_generation(self, session_id: str) -> bool:
-        if session_id in self._generating:
-            return False
-        self._generating.add(session_id)
-        return True
+    def try_begin_generation(self, session_id: str) -> str | None:
+        """Per-session lock shared by all workers. Returns a token for end_generation, or None if busy."""
+        return self.cache.acquire_lock(f"gen:{session_id}", self.GENERATION_LOCK_TTL_SECONDS)
 
-    def end_generation(self, session_id: str) -> None:
-        self._generating.discard(session_id)
+    def end_generation(self, session_id: str, token: str) -> None:
+        self.cache.release_lock(f"gen:{session_id}", token)
 
     def _message_id(self, raw: str | None) -> str:
         if raw:

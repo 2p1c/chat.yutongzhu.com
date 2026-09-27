@@ -6,9 +6,7 @@ IVFFlat index (`embedding vector_cosine_ops`, see backend/schema.sql).
 """
 from datetime import datetime, timezone
 
-import psycopg
-
-from .config import DATABASE_URL
+from .db import get_pool
 
 # Number of IVFFlat lists to probe on similarity search (default is 1, which can
 # miss everything on small demo tables). Must be <= lists in the index (100).
@@ -23,11 +21,8 @@ def _vector_literal(vector: list) -> str:
 class SemanticLayer:
     """Read/write for the `memory_vectors` table."""
 
-    def __init__(self, conninfo: str = DATABASE_URL):
-        self.conninfo = conninfo
-
     def _connect(self):
-        return psycopg.connect(self.conninfo)
+        return get_pool().connection()
 
     def store_memory(self, session_id: str, content: str, embedding: list) -> None:
         """Insert one memory row with its vector embedding."""
@@ -66,6 +61,10 @@ class SemanticLayer:
                 )
                 rows = cur.fetchall()
         return [
-            {"session_id": str(row[0]), "content": row[1], "similarity": float(row[2])}
+            {
+                "session_id": str(row["session_id"]),
+                "content": row["content"],
+                "similarity": float(row["similarity"]),
+            }
             for row in rows
         ]

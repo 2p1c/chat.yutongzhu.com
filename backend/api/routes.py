@@ -15,6 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import iterate_in_threadpool
 
 from auth.deps import get_current_user
 from storage.service import StorageService
@@ -94,23 +95,27 @@ def _sse_chunks(events):
             break  # errors are terminal; close the stream
 
 
-async def _sse_body(request: Request, storage: StorageService, session_id: str, events):
+async def _sse_body(request: Request, storage: StorageService, session_id: str, lock_token: str, events):
     gen = _sse_chunks(events)
     try:
-        for chunk in gen:
+        # gen blocks on Agent I/O (requests); iterating it here would stall the event loop.
+        async for chunk in iterate_in_threadpool(gen):
             if await request.is_disconnected():
                 break
             yield chunk
     finally:
         gen.close()
-        storage.end_generation(session_id)
+        # Sync on purpose: an await here can be cancelled on client disconnect, skipping the release.
+        storage.end_generation(session_id, lock_token)
 
 
-def _stream(request: Request, storage: StorageService, session_id: str, events, occupied: bool = False):
-    if not occupied and not storage.try_begin_generation(session_id):
-        raise HTTPException(status_code=409, detail="session is generating")
+def _stream(request: Request, storage: StorageService, session_id: str, events, lock_token: str | None = None):
+    if lock_token is None:
+        lock_token = storage.try_begin_generation(session_id)
+        if lock_token is None:
+            raise HTTPException(status_code=409, detail="session is generating")
     return StreamingResponse(
-        _sse_body(request, storage, session_id, events),
+        _sse_body(request, storage, session_id, lock_token, events),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -224,12 +229,13 @@ def edit_message(
     uid = _user_id(user)
     if not storage.session_owned_by(session_id, uid):
         raise HTTPException(status_code=404, detail="session not found")
-    if not storage.try_begin_generation(session_id):
+    lock_token = storage.try_begin_generation(session_id)
+    if lock_token is None:
         raise HTTPException(status_code=409, detail="session is generating")
     try:
         messages = storage.truncate_user_message(session_id, uid, message_id, text)
     except ValueError as exc:
-        storage.end_generation(session_id)
+        storage.end_generation(session_id, lock_token)
         status = getattr(exc, "status_code", 400)
         raise HTTPException(status_code=status, detail=str(exc)) from exc
     return _stream(
@@ -237,5 +243,5 @@ def edit_message(
         storage,
         session_id,
         storage.stream_truncated(session_id, uid, messages),
-        occupied=True,
+        lock_token=lock_token,
     )

@@ -73,6 +73,7 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-yutongzhu <noreply@chat.yutongzhu.site>}
       AUTH_EMAIL_ALLOWLIST: ${AUTH_EMAIL_ALLOWLIST:-}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
     depends_on:
       redis:
         condition: service_healthy

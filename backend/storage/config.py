@@ -17,6 +17,8 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/chatdb"
 )
+# Per-process cap. workers x DB_POOL_MAX_SIZE must stay below PG max_connections (100).
+DB_POOL_MAX_SIZE = int(os.getenv("DB_POOL_MAX_SIZE", "20"))
 # Agent container HTTP endpoint (host port when Agent runs in docker on this host).
 AGENT_URL = os.getenv("AGENT_URL", "http://localhost:8765")
 
