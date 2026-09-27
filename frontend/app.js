@@ -705,6 +705,10 @@
       messages.scrollTop = messages.scrollHeight;
     }
 
+    function isNearBottom() {
+      return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
+    }
+
     function render(list) {
       if (!messages) return;
       messages.textContent = '';
@@ -1093,15 +1097,52 @@
       roleEl.className = 'chat-role';
       roleEl.textContent = 'Agent';
       bubble.appendChild(roleEl);
+      var typing = document.createElement('span');
+      typing.className = 'chat-typing';
+      typing.setAttribute('aria-label', '生成中');
+      typing.appendChild(document.createElement('span'));
+      typing.appendChild(document.createElement('span'));
+      typing.appendChild(document.createElement('span'));
+      bubble.appendChild(typing);
       messages.appendChild(bubble);
       messages.scrollTop = messages.scrollHeight;
       var assistantText = '';
       var streamFinalized = false;
+      var renderFrame = 0;
       var ac = new AbortController();
       streamAbort = ac;
 
+      // Re-parsing the whole markdown body on every delta is O(n²); coalesce to one render per frame.
+      function scheduleRender() {
+        if (renderFrame) return;
+        renderFrame = requestAnimationFrame(function () {
+          renderFrame = 0;
+          var stick = isNearBottom();
+          renderMessageContent(bubble, assistantText, false);
+          if (stick) messages.scrollTop = messages.scrollHeight;
+        });
+      }
+
+      function cancelRender() {
+        if (renderFrame) cancelAnimationFrame(renderFrame);
+        renderFrame = 0;
+      }
+
+      // The backend persists assistant text only on done, so a stopped reply is gone after refresh.
+      function keepStopped() {
+        cancelRender();
+        if (!bubble.parentNode || streamFinalized) return;
+        if (!assistantText) { bubble.remove(); return; }
+        renderMessageContent(bubble, assistantText, true);
+        var note = document.createElement('span');
+        note.className = 'chat-stopped-note';
+        note.textContent = '已停止 · 未保存';
+        bubble.appendChild(note);
+      }
+
       function failAndCleanup(reason) {
         streamAbort = null;
+        cancelRender();
         bubble.remove();
         console.error('[chat] send failed:', reason);
         addMessage({ role: 'assistant', mock: true, content: '[Send failed — ' + reason + ']' });
@@ -1124,11 +1165,13 @@
             function onMessage(evt) {
               if (evt && typeof evt.delta === 'string') {
                 assistantText += evt.delta;
-                renderMessageContent(bubble, assistantText, false);
-                messages.scrollTop = messages.scrollHeight;
+                scheduleRender();
               } else if (evt && evt.done && evt.message) {
                 assistantText = evt.message.content || '';
+                cancelRender();
+                var stick = isNearBottom();
                 renderMessageContent(bubble, assistantText, true);
+                if (stick) messages.scrollTop = messages.scrollHeight;
                 streamFinalized = true;
                 applySessionUsage(evt.usage);
               }
@@ -1142,17 +1185,21 @@
         .then(function (interruptEvt) {
           streamAbort = null;
           if (ac.signal.aborted) {
-            if (bubble.parentNode && !streamFinalized) bubble.remove();
+            keepStopped();
             sending = false;
             updateSend();
             return;
           }
+          cancelRender();
           if (interruptEvt) {
             if (!assistantText) bubble.remove();
+            else renderMessageContent(bubble, assistantText, true);
             handleInterrupt(interruptEvt);
             return;
           }
-          if (assistantText && !streamFinalized) {
+          if (!assistantText) {
+            bubble.remove();
+          } else if (!streamFinalized) {
             renderMessageContent(bubble, assistantText, true);
           }
           sending = false;
@@ -1164,12 +1211,13 @@
         .catch(function (err) {
           streamAbort = null;
           if (err && (err.name === 'AbortError' || err.code === 20)) {
-            if (bubble.parentNode && !streamFinalized) bubble.remove();
+            keepStopped();
             sending = false;
             updateSend();
             return;
           }
           if (err && String(err.message || '').indexOf('HTTP 409') === 0) {
+            cancelRender();
             if (bubble.parentNode) bubble.remove();
             sending = false;
             updateSend();
